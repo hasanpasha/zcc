@@ -1,6 +1,5 @@
 const std = @import("std");
 const token = @import("token.zig");
-const TokenKind = token.TokenKind;
 const Location = @import("Location.zig");
 
 const AST = @This();
@@ -222,7 +221,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const Binary = struct {
-        operator: token.LocatedTokenKind,
+        operator: token.LocatedSymbol,
         lhs: *Expression,
         rhs: *Expression,
 
@@ -239,7 +238,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const LhsUnary = struct {
-        operator: token.LocatedTokenKind,
+        operator: token.LocatedSymbol,
         rhs: *Expression,
 
         pub fn format(
@@ -254,7 +253,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const RhsUnary = struct {
-        operator: token.LocatedTokenKind,
+        operator: token.LocatedSymbol,
         lhs: *Expression,
 
         pub fn format(
@@ -269,7 +268,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const Assignment = struct {
-        operator: token.LocatedTokenKind,
+        operator: token.LocatedSymbol,
         lhs: *Expression,
         rhs: *Expression,
 

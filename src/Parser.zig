@@ -27,11 +27,67 @@ allocator: std.mem.Allocator,
 pub const Error = union(enum) {
     lexer_error: Lexer.Error,
     unexpected_token: UnexpectedTokenError,
+    unexpected_keyword: UnexpectedKeywordError,
+    unexpected_symbol: UnexpectedSymbolError,
     unexpected_end_of_token_stream: Location,
     not_expression_token: Token,
 
+    pub const UnexpectedKeywordError = struct {
+        expected: token.Keyword,
+        found: token.Keyword,
+        location: Location,
+
+        pub fn format(
+            self: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            try writer.print("expected keyword {} but found {} at {f}", .{
+                self.expected,
+                self.found,
+                std.fmt.alt(self.location, .readableFmt),
+            });
+        }
+    };
+
+    pub const UnexpectedSymbolError = struct {
+        expected: union(enum) {
+            one: token.Symbol,
+            many: []const token.Symbol,
+        },
+        found: token.Symbol,
+        location: Location,
+
+        pub fn format(
+            self: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            switch (self.expected) {
+                .one => |sym| {
+                    try writer.print("expected {} but found {} at {f}", .{
+                        sym,
+                        self.found,
+                        std.fmt.alt(self.location, .readableFmt),
+                    });
+                },
+                .many => |syms| {
+                    try writer.print("expected one of symbols {{ ", .{});
+                    for (syms, 1..) |kind, i| {
+                        try writer.print("{}", .{kind});
+                        if (i < syms.len) {
+                            try writer.writeAll(", ");
+                        }
+                    }
+                    try writer.print(" }} but found {} at {f}", .{
+                        self.found,
+                        std.fmt.alt(self.location, .readableFmt),
+                    });
+                },
+            }
+        }
+    };
+
     pub const UnexpectedTokenError = struct {
-        expected: []const TokenKind,
+        expected: ?TokenKind,
         found: Token,
         location: Location,
 
@@ -39,26 +95,14 @@ pub const Error = union(enum) {
             self: @This(),
             writer: *std.Io.Writer,
         ) std.Io.Writer.Error!void {
-            if (self.expected.len == 0) {
-                try writer.print("expected no token but found {f} at {f}", .{
-                    self.found,
-                    std.fmt.alt(self.location, .readableFmt),
-                });
-            } else if (self.expected.len == 1) {
+            if (self.expected) |tok| {
                 try writer.print("expected token of kind {} but found {f} at {f}", .{
-                    self.expected[0],
+                    tok,
                     self.found,
                     std.fmt.alt(self.location, .readableFmt),
                 });
             } else {
-                try writer.print("expected one of token kinds {{ ", .{});
-                for (self.expected, 1..) |kind, i| {
-                    try writer.print("{}", .{kind});
-                    if (i < self.expected.len) {
-                        try writer.writeAll(", ");
-                    }
-                }
-                try writer.print(" }} but found {f} at {f}", .{
+                try writer.print("expected no token but found {f} at {f}", .{
                     self.found,
                     std.fmt.alt(self.location, .readableFmt),
                 });
@@ -75,8 +119,8 @@ pub const Error = union(enum) {
             .unexpected_end_of_token_stream => |l| try writer.print("unexpect end of the token stream at {f}", .{
                 std.fmt.alt(l, .readableFmt),
             }),
-            .unexpected_token => |err| try writer.print("{f}", .{err}),
             .not_expression_token => |tok| try writer.print("{f} is not an expression token", .{tok}),
+            inline else => |err| try writer.print("{f}", .{err}),
         }
     }
 };
@@ -124,7 +168,7 @@ pub fn parse(lexer: Lexer, allocator: std.mem.Allocator) ParserResult(AST) {
 }
 
 fn function(self: *Parser) ParserResult(AST.Function) {
-    if (self.consume(.int).maybe_err()) |err| return .Err(err);
+    if (self.expectKeyword(.int).maybe_err()) |err| return .Err(err);
 
     const identifier: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
@@ -134,9 +178,9 @@ fn function(self: *Parser) ParserResult(AST.Function) {
         .err => |err| return .Err(err),
     };
 
-    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
-    if (self.consume(.void).maybe_err()) |err| return .Err(err);
-    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.lparen).maybe_err()) |err| return .Err(err);
+    if (self.expectKeyword(.void).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.rparen).maybe_err()) |err| return .Err(err);
 
     const body = switch (self.block()) {
         .ok => |val| val,
@@ -146,7 +190,7 @@ fn function(self: *Parser) ParserResult(AST.Function) {
     if (self.current) |tok|
         return .Err(.{
             .unexpected_token = .{
-                .expected = &.{},
+                .expected = null,
                 .found = tok.@"0",
                 .location = tok.@"1",
             },
@@ -156,26 +200,33 @@ fn function(self: *Parser) ParserResult(AST.Function) {
 }
 
 fn block(self: *Parser) ParserResult(AST.Block) {
-    if (self.consume(.lcub).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.lcub).maybe_err()) |err| return .Err(err);
 
-    var items = std.array_list.Managed(AST.BlockItem).init(self.allocator);
-    while (self.match(.rcub) == null) {
+    var items = std.ArrayList(AST.BlockItem).initCapacity(
+        self.allocator,
+        100,
+    ) catch @panic("OOM");
+    while (self.matchSym(.rcub) == null) {
         switch (self.blockItem()) {
-            .ok => |val| items.append(val) catch @panic("OOM"),
+            .ok => |val| items.append(self.allocator, val) catch @panic("OOM"),
             .err => |err| return .Err(err),
         }
     }
 
-    return .Ok(.{ .items = items.toOwnedSlice() catch @panic("OOM") });
+    return .Ok(.{
+        .items = items.toOwnedSlice(self.allocator) catch @panic("OOM"),
+    });
 }
 
 fn blockItem(self: *Parser) ParserResult(AST.BlockItem) {
-    const current, _ = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
+    const current, _ = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
+    });
 
-    return switch (current) {
-        .int => self.declarationItem(),
-        else => self.statementItem(),
-    };
+    return if (current.eql(.{ .keyword = .int }))
+        self.declarationItem()
+    else
+        self.statementItem();
 }
 
 fn declarationItem(self: *Parser) ParserResult(AST.BlockItem) {
@@ -196,7 +247,7 @@ fn statementItem(self: *Parser) ParserResult(AST.BlockItem) {
 }
 
 fn variableDecl(self: *Parser) ParserResult(AST.Declaration) {
-    if (self.consume(.int).maybe_err()) |err| return .Err(err);
+    if (self.expectKeyword(.int).maybe_err()) |err| return .Err(err);
 
     const identifier: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
@@ -206,28 +257,35 @@ fn variableDecl(self: *Parser) ParserResult(AST.Declaration) {
         .err => |err| return .Err(err),
     };
 
-    const init = if (self.match(.equals)) |_| switch (self.expression()) {
+    const init = if (self.matchSym(.equals)) |_| switch (self.expression()) {
         .ok => |val| val.*,
         .err => |err| return .Err(err),
     } else null;
 
-    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.semicolon).maybe_err()) |err| return .Err(err);
 
     return .Ok(.{ .variable = .{ .name = identifier, .init = init } });
 }
 
 fn statement(self: *Parser) ParserResult(Statement) {
-    const current, _ = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
+    const current, _ = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
+    });
 
-    return switch (current) {
-        .@"return" => self.returnStmt(),
-        .semicolon => self.nullStmt(),
-        .@"if" => self.ifStmt(),
-        .goto => self.gotoStmt(),
-        .identifier => if (self.peekTokenKind() == .colon) self.labeledStmtStmt() else self.expressionStmt(),
-        .lcub => self.compoundStmt(),
-        else => self.expressionStmt(),
-    };
+    return if (current.eql(.{ .keyword = .@"return" }))
+        self.returnStmt()
+    else if (current.eql(.{ .keyword = .@"if" }))
+        self.ifStmt()
+    else if (current.eql(.{ .keyword = .goto }))
+        self.gotoStmt()
+    else if (current.eql(.{ .symbol = .semicolon }))
+        self.nullStmt()
+    else if (current == .identifier and self.peekIs(.{ .symbol = .colon }))
+        self.labeledStmtStmt()
+    else if (current.eql(.{ .symbol = .lcub }))
+        self.compoundStmt()
+    else
+        self.expressionStmt();
 }
 
 fn returnStmt(self: *Parser) ParserResult(Statement) {
@@ -240,7 +298,7 @@ fn returnStmt(self: *Parser) ParserResult(Statement) {
         .err => |err| return .Err(err),
     };
 
-    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.semicolon).maybe_err()) |err| return .Err(err);
 
     return .Ok(.{ .@"return" = value });
 }
@@ -250,32 +308,32 @@ fn expressionStmt(self: *Parser) ParserResult(Statement) {
         .ok => |val| val.*,
         .err => |err| return .Err(err),
     };
-    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.semicolon).maybe_err()) |err| return .Err(err);
 
     return .Ok(.{ .expr = expr });
 }
 
 fn nullStmt(self: *Parser) ParserResult(Statement) {
-    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.semicolon).maybe_err()) |err| return .Err(err);
     return .Ok(.null);
 }
 
 fn ifStmt(self: *Parser) ParserResult(Statement) {
-    if (self.consume(.@"if").maybe_err()) |err| return .Err(err);
+    if (self.expectKeyword(.@"if").maybe_err()) |err| return .Err(err);
 
-    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.lparen).maybe_err()) |err| return .Err(err);
     const cond = switch (self.expression()) {
         .ok => |val| val.*,
         .err => |err| return .Err(err),
     };
-    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.rparen).maybe_err()) |err| return .Err(err);
 
     const then = switch (self.statement()) {
         .ok => |val| self.onHeap(val),
         .err => |err| return .Err(err),
     };
 
-    const or_else = if (self.match(.@"else")) |_| switch (self.statement()) {
+    const or_else = if (self.matchKeyword(.@"else")) |_| switch (self.statement()) {
         .ok => |val| self.onHeap(val),
         .err => |err| return .Err(err),
     } else null;
@@ -288,7 +346,7 @@ fn ifStmt(self: *Parser) ParserResult(Statement) {
 }
 
 fn gotoStmt(self: *Parser) ParserResult(Statement) {
-    if (self.consume(.goto).maybe_err()) |err| return .Err(err);
+    if (self.expectKeyword(.goto).maybe_err()) |err| return .Err(err);
     const target: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
             .name = val.@"0".identifier,
@@ -296,7 +354,7 @@ fn gotoStmt(self: *Parser) ParserResult(Statement) {
         },
         .err => |err| return .Err(err),
     };
-    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.semicolon).maybe_err()) |err| return .Err(err);
 
     return .Ok(.{ .goto = target });
 }
@@ -310,7 +368,7 @@ fn labeledStmtStmt(self: *Parser) ParserResult(Statement) {
         .err => |err| return .Err(err),
     };
 
-    if (self.consume(.colon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.colon).maybe_err()) |err| return .Err(err);
 
     const stmt = switch (self.statement()) {
         .ok => |val| self.onHeap(val),
@@ -378,9 +436,8 @@ const PrecedenceRule = struct {
     }
 };
 
-const precedence_rules: std.EnumArray(TokenKind, PrecedenceRule) = .initDefault(.{}, .{
+const precedence_rules: std.EnumArray(token.Symbol, PrecedenceRule) = .initDefault(.{}, .{
     .lparen = .{ .prefix = group },
-    .int_lit = .{ .prefix = intLitExpr, .precedence = .primary },
     .tilde = .{ .prefix = leftUnary, .precedence = .lhs_unary },
     .minus = .{ .prefix = leftUnary, .infix = binary, .precedence = .term },
     .plus = .{ .prefix = leftUnary, .infix = binary, .precedence = .term },
@@ -401,7 +458,6 @@ const precedence_rules: std.EnumArray(TokenKind, PrecedenceRule) = .initDefault(
     .gt = .{ .infix = binary, .precedence = .comparison },
     .lt_equals = .{ .infix = binary, .precedence = .comparison },
     .gt_equals = .{ .infix = binary, .precedence = .comparison },
-    .identifier = .{ .prefix = variable, .precedence = .primary },
     .equals = .{ .infix = assignment, .precedence = .assignment },
     .plus_equals = .{ .infix = assignment, .precedence = .assignment },
     .minus_equals = .{ .infix = assignment, .precedence = .assignment },
@@ -419,8 +475,18 @@ const precedence_rules: std.EnumArray(TokenKind, PrecedenceRule) = .initDefault(
 });
 
 fn peekPrecedenceRule(self: *Parser) ParserResult(PrecedenceRule) {
-    const next_token, _ = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
-    return .Ok(precedence_rules.get(next_token.kind()));
+    const next_token, _ = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
+    });
+
+    const rule: PrecedenceRule = switch (next_token) {
+        .identifier => .{ .prefix = variable, .precedence = .primary },
+        .int_lit => .{ .prefix = intLitExpr, .precedence = .primary },
+        .symbol => |symbol| precedence_rules.get(symbol),
+        .keyword => unreachable,
+    };
+
+    return .Ok(rule);
 }
 
 fn parsePrecedence(self: *Parser, precedence: Precedence) ParserResult(*Expression) {
@@ -456,12 +522,12 @@ fn expression(self: *Parser) ParserResult(*Expression) {
 }
 
 fn group(self: *Parser) ParserResult(Expression) {
-    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.lparen).maybe_err()) |err| return .Err(err);
     const expr = switch (self.expression()) {
         .ok => |val| val.*,
         .err => |err| return .Err(err),
     };
-    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.rparen).maybe_err()) |err| return .Err(err);
     return .Ok(expr);
 }
 
@@ -478,7 +544,7 @@ fn intLitExpr(self: *Parser) ParserResult(Expression) {
 }
 
 fn leftUnary(self: *Parser) ParserResult(Expression) {
-    const operator = switch (self.expectOneOf(&.{
+    const operator = switch (self.expectSymbols(&.{
         .tilde,
         .plus,
         .minus,
@@ -486,10 +552,7 @@ fn leftUnary(self: *Parser) ParserResult(Expression) {
         .plus_plus,
         .minus_minus,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -505,14 +568,11 @@ fn leftUnary(self: *Parser) ParserResult(Expression) {
 }
 
 fn rhsUnary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
-    const operator = switch (self.expectOneOf(&.{
+    const operator = switch (self.expectSymbols(&.{
         .plus_plus,
         .minus_minus,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -523,7 +583,7 @@ fn rhsUnary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
 }
 
 fn binary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
-    const operator = switch (self.expectOneOf(&.{
+    const operator = switch (self.expectSymbols(&.{
         .minus,
         .plus,
         .asterisk,
@@ -544,10 +604,7 @@ fn binary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
         .gt_equals,
         .equals,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -565,7 +622,7 @@ fn binary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
 }
 
 fn assignment(self: *Parser, lhs: *Expression) ParserResult(Expression) {
-    const operator = switch (self.expectOneOf(&.{
+    const operator = switch (self.expectSymbols(&.{
         .equals,
         .plus_equals,
         .minus_equals,
@@ -578,10 +635,7 @@ fn assignment(self: *Parser, lhs: *Expression) ParserResult(Expression) {
         .lt_lt_equals,
         .gt_gt_equals,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -610,14 +664,14 @@ fn variable(self: *Parser) ParserResult(Expression) {
 }
 
 fn ternary(self: *Parser, cond: *Expression) ParserResult(Expression) {
-    if (self.consume(.quest).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.quest).maybe_err()) |err| return .Err(err);
 
     const left = switch (self.expression()) {
         .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
-    if (self.consume(.colon).maybe_err()) |err| return .Err(err);
+    if (self.expectSymbol(.colon).maybe_err()) |err| return .Err(err);
 
     const right = switch (self.parsePrecedence(.ternary)) {
         .ok => |val| val,
@@ -631,45 +685,82 @@ fn ternary(self: *Parser, cond: *Expression) ParserResult(Expression) {
     } });
 }
 
-fn expectOneOf(self: *Parser, kinds: []const TokenKind) ParserResult(LocatedToken) {
-    const current = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
+fn expectSymbols(self: *Parser, symbols: []const token.Symbol) ParserResult(token.LocatedSymbol) {
+    const symbol, const loc = switch (self.expect(.symbol)) {
+        .ok => |val| .{
+            val.@"0".symbol,
+            val.@"1",
+        },
+        .err => |err| return .Err(err),
+    };
 
-    if (oneOf(current.@"0".kind(), kinds)) {
-        if (self.advance().maybe_err()) |err| return .Err(err);
-        return .Ok(current);
-    }
-
-    return .Err(.{
-        .unexpected_token = .{
-            .expected = kinds,
-            .found = current.@"0",
-            .location = current.@"1",
+    if (!oneOf(symbol, symbols)) return .Err(.{
+        .unexpected_symbol = .{
+            .expected = .{ .many = symbols },
+            .found = symbol,
+            .location = loc,
         },
     });
+
+    return .Ok(.{ symbol, loc });
+}
+
+fn expectSymbol(self: *Parser, symbol: token.Symbol) ParserResult(token.LocatedSymbol) {
+    const cur_symbol, const loc = switch (self.expect(.symbol)) {
+        .ok => |val| .{
+            val.@"0".symbol,
+            val.@"1",
+        },
+        .err => |err| return .Err(err),
+    };
+
+    if (cur_symbol != symbol) return .Err(.{
+        .unexpected_symbol = .{
+            .expected = .{ .one = symbol },
+            .found = symbol,
+            .location = loc,
+        },
+    });
+
+    return .Ok(.{ symbol, loc });
+}
+
+fn expectKeyword(self: *Parser, keyword: token.Keyword) ParserResult(token.LocatedKeyword) {
+    const cur_keyword, const loc = switch (self.expect(.keyword)) {
+        .ok => |val| .{
+            val.@"0".keyword,
+            val.@"1",
+        },
+        .err => |err| return .Err(err),
+    };
+
+    if (cur_keyword != keyword) return .Err(.{
+        .unexpected_keyword = .{
+            .expected = keyword,
+            .found = cur_keyword,
+            .location = loc,
+        },
+    });
+
+    return .Ok(.{ keyword, loc });
 }
 
 fn expect(self: *Parser, kind: TokenKind) ParserResult(LocatedToken) {
-    const current = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
-
-    if (current.@"0" == kind) {
-        if (self.advance().maybe_err()) |err| return .Err(err);
-        return .Ok(current);
-    }
-
-    return .Err(.{
-        .unexpected_token = .{
-            .expected = self.allocator.dupe(TokenKind, &.{kind}) catch @panic("OOM"),
-            .found = current.@"0",
-            .location = current.@"1",
-        },
+    const current, const loc = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
     });
-}
 
-fn consume(self: *Parser, kind: TokenKind) ParserResult(void) {
-    return switch (self.expect(kind)) {
-        .ok => .Ok({}),
-        .err => |err| .Err(err),
-    };
+    if (current != kind)
+        return .Err(.{
+            .unexpected_token = .{
+                .expected = kind,
+                .found = current,
+                .location = loc,
+            },
+        });
+
+    if (self.advance().maybe_err()) |err| return .Err(err);
+    return .Ok(.{ current, loc });
 }
 
 fn advance(self: *Parser) ParserResult(?LocatedToken) {
@@ -684,11 +775,24 @@ fn advance(self: *Parser) ParserResult(?LocatedToken) {
     return .Ok(current);
 }
 
-fn match(self: *Parser, kind: TokenKind) ?LocatedToken {
+fn matchKeyword(self: *Parser, keyword: token.Keyword) ?token.LocatedKeyword {
     if (self.current) |cur| {
-        const tok, _ = cur;
-        if (tok == kind)
-            return self.advance().unwrap();
+        const tok, const loc = cur;
+        if (tok.eql(.{ .keyword = keyword })) {
+            _ = self.advance().unwrap();
+            return .{ keyword, loc };
+        }
+    }
+    return null;
+}
+
+fn matchSym(self: *Parser, sym: token.Symbol) ?token.LocatedSymbol {
+    if (self.current) |cur| {
+        const tok, const loc = cur;
+        if (tok.eql(.{ .symbol = sym })) {
+            _ = self.advance().unwrap();
+            return .{ sym, loc };
+        }
     }
     return null;
 }
@@ -701,11 +805,11 @@ fn lexerNext(self: *Parser) ParserResult(?LocatedToken) {
     return self.lexer.next().map_err(mapLexerError);
 }
 
-fn peekTokenKind(self: *Parser) ?TokenKind {
+fn peekIs(self: *Parser, tok: Token) bool {
     if (self.peek) |peek| {
-        return peek.@"0".kind();
+        return peek.@"0".eql(tok);
     }
-    return null;
+    return false;
 }
 
 const onHeap = @import("utils.zig").onHeap;

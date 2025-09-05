@@ -1,7 +1,7 @@
 const std = @import("std");
 const token = @import("token.zig");
-const TokenKind = token.TokenKind;
 const Token = token.Token;
+const TokenKind = token.TokenKind;
 const Location = @import("Location.zig");
 
 const Result = @import("result.zig").Result;
@@ -56,7 +56,41 @@ pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {
 
     const start_loc = self.location;
 
-    const tok_result = switch (ch) {
+    const tok_result: LexerResult(Token) = if (self.lexSymbol()) |tok|
+        .Ok(tok)
+    else if (std.ascii.isWhitespace(ch)) {
+        self.skipWhitespace();
+        return self.next();
+    } else if (isIdentifierStart(ch))
+        self.lexIdentifier()
+    else if (std.ascii.isDigit(ch))
+        self.lexNumber()
+    else
+        .Err(.{ .unrecognized_character = .{
+            .char = ch,
+            .location = self.location,
+        } });
+
+    return switch (tok_result) {
+        .ok => |val| .Ok(.{ val, start_loc }),
+        .err => |err| .Err(err),
+    };
+}
+
+pub fn format(
+    self: @This(),
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    try writer.print("Lexer{{ src: \"{s}\", position: {}, location: {f}, ch: '{c}' }}", .{
+        self.src,
+        self.position,
+        self.location,
+        self.ch orelse 0,
+    });
+}
+
+fn lexSymbol(self: *Lexer) ?Token {
+    return switch (self.ch orelse return null) {
         '(' => self.advanceWith(.lparen),
         ')' => self.advanceWith(.rparen),
         '{' => self.advanceWith(.lcub),
@@ -77,45 +111,8 @@ pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {
         '=' => self.advanceWith(if (self.match('=')) .equals_equals else .equals),
         ':' => self.advanceWith(.colon),
         '?' => self.advanceWith(.quest),
-        else => token: {
-            if (std.ascii.isWhitespace(ch)) {
-                self.skipWhitespace();
-                return self.next();
-            }
-
-            if (isIdentifierStart(ch))
-                break :token self.lexIdentifier();
-
-            if (std.ascii.isDigit(ch))
-                break :token self.lexNumber();
-
-            break :token LexerResult(Token).Err(.{
-                .unrecognized_character = .{
-                    .char = ch,
-                    .location = self.location,
-                },
-            });
-        },
+        else => null,
     };
-
-    const tok = switch (tok_result) {
-        .ok => |val| val,
-        .err => |err| return .Err(err),
-    };
-
-    return .Ok(.{ tok, start_loc });
-}
-
-pub fn format(
-    self: @This(),
-    writer: *std.Io.Writer,
-) std.Io.Writer.Error!void {
-    try writer.print("Lexer{{ src: \"{s}\", position: {}, location: {f}, ch: '{c}' }}", .{
-        self.src,
-        self.position,
-        self.location,
-        self.ch orelse 0,
-    });
 }
 
 fn lexNumber(self: *Lexer) LexerResult(Token) {
@@ -185,7 +182,7 @@ fn lexDecimalNumber(self: *Lexer) LexerResult(Token) {
     return .Ok(.{ .int_lit = number });
 }
 
-const keywordsMap = std.StaticStringMap(Token).initComptime(.{
+const keywords = std.StaticStringMap(token.Keyword).initComptime(.{
     .{ "int", .int },
     .{ "void", .void },
     .{ "return", .@"return" },
@@ -196,7 +193,10 @@ const keywordsMap = std.StaticStringMap(Token).initComptime(.{
 
 fn lexIdentifier(self: *Lexer) LexerResult(Token) {
     const lexeme = self.readWhile(isIdentifier);
-    const tok = keywordsMap.get(lexeme) orelse Token{ .identifier = lexeme };
+    const tok: Token = if (keywords.get(lexeme)) |keyword|
+        .{ .keyword = keyword }
+    else
+        .{ .identifier = lexeme };
     return .Ok(tok);
 }
 
@@ -218,9 +218,9 @@ fn skipWhitespace(self: *Lexer) void {
     self.seek(std.ascii.isWhitespace);
 }
 
-fn advanceWith(self: *Lexer, tok: Token) LexerResult(Token) {
+fn advanceWith(self: *Lexer, sym: token.Symbol) Token {
     self.advance();
-    return .Ok(tok);
+    return .{ .symbol = sym };
 }
 
 fn seek(self: *Lexer, pred: fn (u8) bool) void {

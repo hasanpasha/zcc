@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const TokenKind = @import("../token.zig").TokenKind;
+const Symbol = @import("../token.zig").Symbol;
 
 const AST = @import("../AST.zig");
 pub const Identifier = AST.Identifier;
@@ -175,7 +175,7 @@ pub const Expression = union(ExpressionKind) {
     conditional: Conditional,
 
     pub const Binary = struct {
-        operator: TokenKind,
+        operator: Symbol,
         lhs: *Expression,
         rhs: *Expression,
 
@@ -192,7 +192,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const LhsUnary = struct {
-        operator: TokenKind,
+        operator: Symbol,
         rhs: *Expression,
 
         pub fn format(
@@ -207,7 +207,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const RhsUnary = struct {
-        operator: TokenKind,
+        operator: Symbol,
         lhs: *Expression,
 
         pub fn format(
@@ -222,7 +222,7 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const Assignment = struct {
-        operator: TokenKind,
+        operator: Symbol,
         lhs: *Expression,
         rhs: *Expression,
 
