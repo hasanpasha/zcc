@@ -1,0 +1,14 @@
+.{
+    .name = .zcc,
+    .version = "0.0.1",
+    .dependencies = .{
+        .clap = .{
+            .url = "git+https://github.com/Hejsil/zig-clap#5289e0753cd274d65344bef1c114284c633536ea",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
+    },
+    // .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0-dev.70+73a0b5441",
+    .paths = .{""},
+    .fingerprint = 0x3c4c3c12624b25e7,
+}

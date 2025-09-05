@@ -1,0 +1,8 @@
+.zig-cache/
+zig-out/
+writing-a-c-compiler-tests/
+main
+main.c*
+main.s
+a.out
+.vscode

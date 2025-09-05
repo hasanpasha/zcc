@@ -1,0 +1,1 @@
+zig-0.15.1 build book-test -- $@
