@@ -20,7 +20,7 @@ const Options = struct {
     codegen: bool = false,
     filepath: []const u8,
 
-    pub fn get(allocator: std.mem.Allocator) !Options {
+    pub fn get(allocator: std.mem.Allocator) Options {
         const params = comptime clap.parseParamsComptime(
             \\-h, --help            Display this help and exit.
             \\--version             Print version and exit.
@@ -38,10 +38,13 @@ const Options = struct {
         };
 
         var diag = clap.Diagnostic{};
-        var res = try clap.parse(clap.Help, &params, parsers, .{
+        var res = clap.parse(clap.Help, &params, parsers, .{
             .diagnostic = &diag,
             .allocator = allocator,
-        });
+        }) catch |err| {
+            diag.reportToFile(.stderr(), err) catch {};
+            exit(1);
+        };
         defer res.deinit();
 
         var self: Options = undefined;
@@ -86,7 +89,7 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
-    const options = try Options.get(allocator);
+    const options = Options.get(allocator);
 
     const processed_file = try replaceExtension(options.filepath, ".cc", allocator);
     defer allocator.free(processed_file);
