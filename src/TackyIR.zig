@@ -1,27 +1,27 @@
 const std = @import("std");
 
-pub const ProgramTackyIR = struct {
-    main: FunctionTackyIR,
+const TackyIR = @This();
 
-    arena: std.heap.ArenaAllocator,
+main: Function,
 
-    pub fn free(self: ProgramTackyIR) void {
-        self.arena.deinit();
-    }
+arena: std.heap.ArenaAllocator,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
-        try writer.print("ProgramTackyIR{{ main: {f} }}", .{self.main});
-    }
+pub fn free(self: TackyIR) void {
+    self.arena.deinit();
+}
 
-    pub fn prettyFmt(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("{f}", .{PrettyPrint.pretty(self)});
-    }
-};
+pub fn format(
+    self: @This(),
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    try writer.print("TackyIR{{ main: {f} }}", .{self.main});
+}
 
-pub const FunctionTackyIR = struct {
+pub fn prettyFmt(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try writer.print("{f}", .{PrettyPrint.pretty(self)});
+}
+
+pub const Function = struct {
     identifier: []const u8,
     instructions: []const Instruction,
 
@@ -234,19 +234,19 @@ pub const PrettyPrint = struct {
     const Error = Writer.Error;
     const Alt = std.fmt.Alt;
 
-    fn pretty(p: ProgramTackyIR) Alt(ProgramTackyIR, programFmt) {
+    fn pretty(p: TackyIR) Alt(TackyIR, programFmt) {
         return .{ .data = p };
     }
 
-    fn programFmt(p: ProgramTackyIR, writer: *Writer) Error!void {
+    fn programFmt(p: TackyIR, writer: *Writer) Error!void {
         try writer.print("{f}", .{function(p.main)});
     }
 
-    fn function(f: FunctionTackyIR) Alt(FunctionTackyIR, functionFmt) {
+    fn function(f: Function) Alt(Function, functionFmt) {
         return .{ .data = f };
     }
 
-    fn functionFmt(f: FunctionTackyIR, w: *Writer) Error!void {
+    fn functionFmt(f: Function, w: *Writer) Error!void {
         try w.print("fun {s}\n", .{f.identifier});
         try w.print("{{\n", .{});
         for (f.instructions) |instr| {

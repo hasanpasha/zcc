@@ -1,7 +1,6 @@
 const std = @import("std");
-const ast = @import("../ast.zig");
-const vir = @import("vir.zig");
-const lir = @import("lir.zig");
+const AST = @import("../AST.zig");
+const LIR = @import("LIR.zig");
 const Result = @import("../result.zig").Result;
 
 const VariableResolution = @import("VariableResolution.zig");
@@ -21,7 +20,7 @@ pub const Error = union(enum) {
     }
 };
 
-pub fn analyze(in: ast.Program, allocator: std.mem.Allocator) Result(lir.Program, Error) {
+pub fn analyze(in: AST, allocator: std.mem.Allocator) Result(LIR, Error) {
     const vars_reolved = switch (VariableResolution.resolve(in, allocator)) {
         .ok => |val| val,
         .err => |err| return .Err(.{ .variable_resolution = err }),

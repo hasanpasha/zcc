@@ -1,8 +1,8 @@
 const std = @import("std");
-const lir = @import("lir.zig");
-const vir = @import("vir.zig");
+const LIR = @import("LIR.zig");
+const VIR = @import("VIR.zig");
 const Result = @import("../result.zig").Result;
-const Location = @import("../location.zig").Location;
+const Location = @import("../Location.zig");
 
 allocator: std.mem.Allocator,
 labels: std.StringHashMap([]const u8),
@@ -54,7 +54,7 @@ pub const Error = struct {
     }
 };
 
-pub fn resolve(in: vir.Program, allocator: std.mem.Allocator) Result(lir.Program, Error) {
+pub fn resolve(in: VIR, allocator: std.mem.Allocator) Result(LIR, Error) {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self: LabelResolution = .{
@@ -74,14 +74,14 @@ pub fn resolve(in: vir.Program, allocator: std.mem.Allocator) Result(lir.Program
     return .Ok(.{ .main_function = main_func, .arena = arena });
 }
 
-fn gather(self: *LabelResolution, blk: vir.Block) void {
+fn gather(self: *LabelResolution, blk: VIR.Block) void {
     for (blk.items) |item| {
         if (item == .declaration) continue;
         self.gatherInStmt(item.statement);
     }
 }
 
-fn gatherInStmt(self: *LabelResolution, stmt: vir.Statement) void {
+fn gatherInStmt(self: *LabelResolution, stmt: VIR.Statement) void {
     switch (stmt) {
         .@"return", .expr, .goto, .null => {},
         .@"if" => |_if| {
@@ -106,28 +106,28 @@ fn gatherInStmt(self: *LabelResolution, stmt: vir.Statement) void {
     }
 }
 
-fn function(self: *LabelResolution, func: vir.Function) lir.Function {
+fn function(self: *LabelResolution, func: VIR.Function) LIR.Function {
     return .{
         .name = func.name,
         .body = self.block(func.body),
     };
 }
 
-fn block(self: *LabelResolution, blk: vir.Block) lir.Block {
-    var items = self.allocator.alloc(lir.BlockItem, blk.items.len) catch @panic("OOM");
+fn block(self: *LabelResolution, blk: VIR.Block) LIR.Block {
+    var items = self.allocator.alloc(LIR.BlockItem, blk.items.len) catch @panic("OOM");
     for (blk.items, 0..) |item, i|
         items[i] = self.blockItem(item);
     return .{ .items = items };
 }
 
-fn blockItem(self: *LabelResolution, item: vir.BlockItem) lir.BlockItem {
+fn blockItem(self: *LabelResolution, item: VIR.BlockItem) LIR.BlockItem {
     return switch (item) {
         .declaration => |decl| .{ .declaration = decl },
         .statement => |stmt| .{ .statement = self.statement(stmt) },
     };
 }
 
-fn statement(self: *LabelResolution, stmt: vir.Statement) lir.Statement {
+fn statement(self: *LabelResolution, stmt: VIR.Statement) LIR.Statement {
     return switch (stmt) {
         .null => .null,
         .@"return" => |expr| .{ .@"return" = expr },

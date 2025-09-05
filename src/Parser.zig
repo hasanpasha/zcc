@@ -1,16 +1,16 @@
 const std = @import("std");
 const Lexer = @import("Lexer.zig");
 
-const ast = @import("ast.zig");
-const Statement = ast.Statement;
-const Expression = ast.Expression;
+const AST = @import("AST.zig");
+const Statement = AST.Statement;
+const Expression = AST.Expression;
 
 const token = @import("token.zig");
 const Token = token.Token;
 const TokenKind = token.TokenKind;
 const LocatedToken = token.LocatedToken;
 const LocatedTokenKind = token.LocatedTokenKind;
-const Location = @import("location.zig").Location;
+const Location = @import("Location.zig");
 
 const Result = @import("result.zig").Result;
 const oneOf = @import("utils.zig").oneOf;
@@ -107,7 +107,7 @@ pub fn printlocatedToken(lt: LocatedToken, writer: *std.Io.Writer) std.Io.Writer
     try writer.print("LocatedToken{{ token: {f}, location: {f} }}", .{ tok, loc });
 }
 
-pub fn parse(lexer: Lexer, allocator: std.mem.Allocator) ParserResult(ast.Program) {
+pub fn parse(lexer: Lexer, allocator: std.mem.Allocator) ParserResult(AST) {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self = Parser{ .lexer = lexer, .allocator = arena.allocator() };
@@ -123,10 +123,10 @@ pub fn parse(lexer: Lexer, allocator: std.mem.Allocator) ParserResult(ast.Progra
     return .Ok(.{ .main_function = main_function, .arena = arena });
 }
 
-fn function(self: *Parser) ParserResult(ast.Function) {
+fn function(self: *Parser) ParserResult(AST.Function) {
     if (self.consume(.int).maybe_err()) |err| return .Err(err);
 
-    const identifier: ast.Identifier = switch (self.expect(.identifier)) {
+    const identifier: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
             .name = val.@"0".identifier,
             .location = val.@"1",
@@ -155,10 +155,10 @@ fn function(self: *Parser) ParserResult(ast.Function) {
     return .Ok(.{ .name = identifier, .body = body });
 }
 
-fn block(self: *Parser) ParserResult(ast.Block) {
+fn block(self: *Parser) ParserResult(AST.Block) {
     if (self.consume(.lcub).maybe_err()) |err| return .Err(err);
 
-    var items = std.array_list.Managed(ast.BlockItem).init(self.allocator);
+    var items = std.array_list.Managed(AST.BlockItem).init(self.allocator);
     while (self.match(.rcub) == null) {
         switch (self.blockItem()) {
             .ok => |val| items.append(val) catch @panic("OOM"),
@@ -169,7 +169,7 @@ fn block(self: *Parser) ParserResult(ast.Block) {
     return .Ok(.{ .items = items.toOwnedSlice() catch @panic("OOM") });
 }
 
-fn blockItem(self: *Parser) ParserResult(ast.BlockItem) {
+fn blockItem(self: *Parser) ParserResult(AST.BlockItem) {
     const current, _ = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
 
     return switch (current) {
@@ -178,7 +178,7 @@ fn blockItem(self: *Parser) ParserResult(ast.BlockItem) {
     };
 }
 
-fn declarationItem(self: *Parser) ParserResult(ast.BlockItem) {
+fn declarationItem(self: *Parser) ParserResult(AST.BlockItem) {
     const decl = switch (self.variableDecl()) {
         .ok => |val| val,
         .err => |err| return .Err(err),
@@ -187,7 +187,7 @@ fn declarationItem(self: *Parser) ParserResult(ast.BlockItem) {
     return .Ok(.{ .declaration = decl });
 }
 
-fn statementItem(self: *Parser) ParserResult(ast.BlockItem) {
+fn statementItem(self: *Parser) ParserResult(AST.BlockItem) {
     const stmt = switch (self.statement()) {
         .ok => |val| val,
         .err => |err| return .Err(err),
@@ -195,10 +195,10 @@ fn statementItem(self: *Parser) ParserResult(ast.BlockItem) {
     return .Ok(.{ .statement = stmt });
 }
 
-fn variableDecl(self: *Parser) ParserResult(ast.Declaration) {
+fn variableDecl(self: *Parser) ParserResult(AST.Declaration) {
     if (self.consume(.int).maybe_err()) |err| return .Err(err);
 
-    const identifier: ast.Identifier = switch (self.expect(.identifier)) {
+    const identifier: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
             .name = val.@"0".identifier,
             .location = val.@"1",
@@ -289,7 +289,7 @@ fn ifStmt(self: *Parser) ParserResult(Statement) {
 
 fn gotoStmt(self: *Parser) ParserResult(Statement) {
     if (self.consume(.goto).maybe_err()) |err| return .Err(err);
-    const target: ast.Identifier = switch (self.expect(.identifier)) {
+    const target: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
             .name = val.@"0".identifier,
             .location = val.@"1",
@@ -302,7 +302,7 @@ fn gotoStmt(self: *Parser) ParserResult(Statement) {
 }
 
 fn labeledStmtStmt(self: *Parser) ParserResult(Statement) {
-    const label: ast.Identifier = switch (self.expect(.identifier)) {
+    const label: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
             .name = val.@"0".identifier,
             .location = val.@"1",
@@ -466,7 +466,7 @@ fn group(self: *Parser) ParserResult(Expression) {
 }
 
 fn intLitExpr(self: *Parser) ParserResult(Expression) {
-    const int: ast.Expression.IntLit = switch (self.expect(.int_lit)) {
+    const int: AST.Expression.IntLit = switch (self.expect(.int_lit)) {
         .ok => |val| .{
             .value = val.@"0".int_lit,
             .location = val.@"1",
@@ -599,7 +599,7 @@ fn assignment(self: *Parser, lhs: *Expression) ParserResult(Expression) {
 }
 
 fn variable(self: *Parser) ParserResult(Expression) {
-    const identifier: ast.Identifier = switch (self.expect(.identifier)) {
+    const identifier: AST.Identifier = switch (self.expect(.identifier)) {
         .ok => |val| .{
             .name = val.@"0".identifier,
             .location = val.@"1",

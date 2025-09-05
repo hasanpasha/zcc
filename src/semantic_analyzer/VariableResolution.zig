@@ -1,8 +1,8 @@
 const std = @import("std");
-const vir = @import("vir.zig");
-const ast = @import("../ast.zig");
+const VIR = @import("VIR.zig");
+const AST = @import("../AST.zig");
 const Result = @import("../result.zig").Result;
-const Location = @import("../location.zig").Location;
+const Location = @import("../Location.zig");
 const oneOf = @import("../utils.zig").oneOf;
 
 pub const Environment = struct {
@@ -91,7 +91,7 @@ pub const Error = struct {
     }
 };
 
-pub fn resolve(in: ast.Program, allocator: std.mem.Allocator) Result(vir.Program, Error) {
+pub fn resolve(in: AST, allocator: std.mem.Allocator) Result(VIR, Error) {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self: VariableResolution = .{
@@ -110,14 +110,14 @@ pub fn resolve(in: ast.Program, allocator: std.mem.Allocator) Result(vir.Program
     return .Ok(.{ .main_function = main_func, .arena = arena });
 }
 
-fn function(self: *VariableResolution, func: ast.Function) vir.Function {
+fn function(self: *VariableResolution, func: AST.Function) VIR.Function {
     return .{
         .name = func.name.name,
         .body = self.block(func.body),
     };
 }
 
-fn block(self: *VariableResolution, blk: ast.Block) vir.Block {
+fn block(self: *VariableResolution, blk: AST.Block) VIR.Block {
     self.variables = .init(self.allocator, self.variables);
     defer {
         const parent = self.variables.parent;
@@ -126,20 +126,20 @@ fn block(self: *VariableResolution, blk: ast.Block) vir.Block {
             self.variables = p;
     }
 
-    var items = self.allocator.alloc(vir.BlockItem, blk.items.len) catch @panic("OOM");
+    var items = self.allocator.alloc(VIR.BlockItem, blk.items.len) catch @panic("OOM");
     for (blk.items, 0..) |item, i|
         items[i] = self.blockItem(item);
     return .{ .items = items };
 }
 
-fn blockItem(self: *VariableResolution, item: ast.BlockItem) vir.BlockItem {
+fn blockItem(self: *VariableResolution, item: AST.BlockItem) VIR.BlockItem {
     return switch (item) {
         .declaration => |decl| .{ .declaration = self.declaration(decl) },
         .statement => |stmt| .{ .statement = self.statement(stmt) },
     };
 }
 
-fn declaration(self: *VariableResolution, decl: ast.Declaration) vir.Declaration {
+fn declaration(self: *VariableResolution, decl: AST.Declaration) VIR.Declaration {
     return switch (decl) {
         .variable => |variable| _var: {
             const name = variable.name.name;
@@ -154,7 +154,7 @@ fn declaration(self: *VariableResolution, decl: ast.Declaration) vir.Declaration
             const unique_name = self.makeUniqueName(name);
             self.variables.put(name, unique_name);
 
-            var init: ?vir.Expression = null;
+            var init: ?VIR.Expression = null;
             if (variable.init) |_init|
                 init = self.expression(_init);
 
@@ -166,7 +166,7 @@ fn declaration(self: *VariableResolution, decl: ast.Declaration) vir.Declaration
     };
 }
 
-fn statement(self: *VariableResolution, stmt: ast.Statement) vir.Statement {
+fn statement(self: *VariableResolution, stmt: AST.Statement) VIR.Statement {
     return switch (stmt) {
         .null => .null,
         .@"return" => |expr| .{ .@"return" = self.expression(expr) },
@@ -189,7 +189,7 @@ fn statement(self: *VariableResolution, stmt: ast.Statement) vir.Statement {
     };
 }
 
-fn expression(self: *VariableResolution, expr: ast.Expression) vir.Expression {
+fn expression(self: *VariableResolution, expr: AST.Expression) VIR.Expression {
     return switch (expr) {
         .int_lit => |lit| .{ .int_lit = lit.value },
         .binary => |binary| .{ .binary = .{
@@ -268,7 +268,7 @@ fn makeUniqueName(self: *VariableResolution, suffix: []const u8) []u8 {
     }) catch @panic("OOM");
 }
 
-fn locateExpr(expr: ast.Expression) Location {
+fn locateExpr(expr: AST.Expression) Location {
     return switch (expr) {
         .int_lit => |lit| lit.location,
         .binary => |b| locateExpr(b.lhs.*),

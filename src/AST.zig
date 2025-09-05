@@ -1,29 +1,29 @@
 const std = @import("std");
 const token = @import("token.zig");
 const TokenKind = token.TokenKind;
-const Location = @import("location.zig").Location;
+const Location = @import("Location.zig");
 
-pub const Program = struct {
-    main_function: Function,
+const AST = @This();
 
-    /// not part of the AST
-    arena: std.heap.ArenaAllocator,
+main_function: Function,
 
-    pub fn free(self: Program) void {
-        self.arena.deinit();
-    }
+/// not part of the AST
+arena: std.heap.ArenaAllocator,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
-        try writer.print("ProgramAST{{ main_function: {f} }}", .{self.main_function});
-    }
+pub fn free(self: AST) void {
+    self.arena.deinit();
+}
 
-    pub fn prettyFmt(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("{f}", .{PrettyPrint.pretty(self)});
-    }
-};
+pub fn format(
+    self: AST,
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    try writer.print("ProgramAST{{ main_function: {f} }}", .{self.main_function});
+}
+
+pub fn prettyFmt(self: AST, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try writer.print("{f}", .{PrettyPrint.pretty(self)});
+}
 
 pub const Identifier = struct {
     name: []const u8,
@@ -320,11 +320,11 @@ pub const PrettyPrint = struct {
     const Writer = std.Io.Writer;
     const Error = Writer.Error;
 
-    pub fn pretty(program: Program) Alt(Program, programFmt) {
-        return .{ .data = program };
+    pub fn pretty(ast: AST) Alt(AST, astFmt) {
+        return .{ .data = ast };
     }
 
-    fn programFmt(program: Program, writer: *Writer) Error!void {
+    fn astFmt(program: AST, writer: *Writer) Error!void {
         try writer.print("(main_function {f})", .{function(program.main_function)});
     }
 

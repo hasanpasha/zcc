@@ -2,29 +2,29 @@ const std = @import("std");
 
 const TokenKind = @import("../token.zig").TokenKind;
 
-const ast = @import("../ast.zig");
-pub const Identifier = ast.Identifier;
-pub const BlockItemKind = ast.BlockItemKind;
-pub const DeclarationKind = ast.DeclarationKind;
-pub const StatementKind = ast.StatementKind;
-pub const ExpressionKind = ast.ExpressionKind;
+const AST = @import("../AST.zig");
+pub const Identifier = AST.Identifier;
+pub const BlockItemKind = AST.BlockItemKind;
+pub const DeclarationKind = AST.DeclarationKind;
+pub const StatementKind = AST.StatementKind;
+pub const ExpressionKind = AST.ExpressionKind;
 
-pub const Program = struct {
-    main_function: Function,
+const VIR = @This();
 
-    arena: std.heap.ArenaAllocator,
+main_function: Function,
 
-    pub fn free(self: Program) void {
-        self.arena.deinit();
-    }
+arena: std.heap.ArenaAllocator,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
-        try writer.print("ProgramVIR{{ main_function: {f} }}", .{self.main_function});
-    }
-};
+pub fn free(self: VIR) void {
+    self.arena.deinit();
+}
+
+pub fn format(
+    self: @This(),
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    try writer.print("ProgramVIR{{ main_function: {f} }}", .{self.main_function});
+}
 
 pub const Block = struct {
     items: []const BlockItem,

@@ -1,28 +1,28 @@
 const std = @import("std");
 
-const vir = @import("vir.zig");
-pub const BlockItemKind = vir.BlockItemKind;
-pub const StatementKind = vir.StatementKind;
-pub const DeclarationKind = vir.DeclarationKind;
-pub const Declaration = vir.Declaration;
-pub const Expression = vir.Expression;
+const VIR = @import("VIR.zig");
+pub const BlockItemKind = VIR.BlockItemKind;
+pub const StatementKind = VIR.StatementKind;
+pub const DeclarationKind = VIR.DeclarationKind;
+pub const Declaration = VIR.Declaration;
+pub const Expression = VIR.Expression;
 
-pub const Program = struct {
-    main_function: Function,
+pub const LIR = @This();
 
-    arena: std.heap.ArenaAllocator,
+main_function: Function,
 
-    pub fn free(self: Program) void {
-        self.arena.deinit();
-    }
+arena: std.heap.ArenaAllocator,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
-        try writer.print("ProgramLIR{{ main_function: {f} }}", .{self.main_function});
-    }
-};
+pub fn free(self: LIR) void {
+    self.arena.deinit();
+}
+
+pub fn format(
+    self: @This(),
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    try writer.print("ProgramLIR{{ main_function: {f} }}", .{self.main_function});
+}
 
 pub const Block = struct {
     items: []const BlockItem,

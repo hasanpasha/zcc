@@ -2,9 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const TokenKind = token.TokenKind;
 const Token = token.Token;
-const loc = @import("location.zig");
-const Location = loc.Location;
-const Located = loc.Located;
+const Location = @import("Location.zig");
 
 const Result = @import("result.zig").Result;
 

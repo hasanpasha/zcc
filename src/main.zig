@@ -2,8 +2,8 @@ const std = @import("std");
 const Lexer = @import("Lexer.zig");
 const Parser = @import("Parser.zig");
 const TackyIRGenerator = @import("TackyIRGenerator.zig");
-const asm_generator = @import("asm_generator.zig");
 const semantic_analyzer = @import("semantic_analyzer/root.zig");
+const asm_generator = @import("asm_generator.zig");
 
 const exit = std.process.exit;
 
@@ -116,41 +116,41 @@ pub fn main() !void {
         exit(0);
     }
 
-    var program_ast = Parser.parse(lexer, allocator).unwrap();
-    defer program_ast.free();
+    var ast = Parser.parse(lexer, allocator).unwrap();
+    defer ast.free();
 
     if (options.parse) {
-        std.log.info("{f}", .{std.fmt.alt(program_ast, .prettyFmt)});
+        std.log.info("{f}", .{std.fmt.alt(ast, .prettyFmt)});
         exit(0);
     }
 
-    var validated = semantic_analyzer.analyze(program_ast, allocator).unwrap();
-    defer validated.free();
+    var validated_ast = semantic_analyzer.analyze(ast, allocator).unwrap();
+    defer validated_ast.free();
 
     if (options.validate) {
-        std.log.info("{f}", .{validated});
+        std.log.info("{f}", .{validated_ast});
         exit(0);
     }
 
-    var program_ir = TackyIRGenerator.generate(validated, allocator);
-    defer program_ir.free();
+    var tir = TackyIRGenerator.lower(validated_ast, allocator);
+    defer tir.free();
 
     if (options.tacky) {
-        std.log.info("{f}", .{std.fmt.alt(program_ir, .prettyFmt)});
+        std.log.info("{f}", .{std.fmt.alt(tir, .prettyFmt)});
         exit(0);
     }
 
-    var program_asm = asm_generator.generate(program_ir, .x86_64, allocator);
-    defer program_asm.free();
+    var air = asm_generator.lower(tir, .x86_64, allocator);
+    defer air.free();
 
     if (options.codegen) {
-        std.log.info("{f}", .{program_asm});
+        std.log.info("{f}", .{air});
         exit(0);
     }
 
     const asm_file = try replaceExtension(options.filepath, ".s", allocator);
     defer allocator.free(asm_file);
-    try program_asm.emitToFile(asm_file);
+    try air.emitToFile(asm_file);
 
     const exe_file = try replaceExtension(options.filepath, "", allocator);
     defer allocator.free(exe_file);

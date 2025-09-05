@@ -1,26 +1,26 @@
 const std = @import("std");
 const Emitter = @import("Emitter.zig");
 
-pub const Program = struct {
-    main_subroutine: Subroutine,
+const ASIR = @This();
 
-    arena: std.heap.ArenaAllocator,
+main_subroutine: Subroutine,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
-        try writer.print("X86_64Program{{ main_subroutine: {f} }}", .{self.main_subroutine});
-    }
+arena: std.heap.ArenaAllocator,
 
-    pub fn emit(self: Program, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try Emitter.emit(self, writer);
-    }
+pub fn format(
+    self: @This(),
+    writer: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    try writer.print("X86_64Program{{ main_subroutine: {f} }}", .{self.main_subroutine});
+}
 
-    pub fn free(self: Program) void {
-        self.arena.deinit();
-    }
-};
+pub fn emit(self: ASIR, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try Emitter.emit(self, writer);
+}
+
+pub fn free(self: ASIR) void {
+    self.arena.deinit();
+}
 
 pub const Subroutine = struct {
     name: []const u8,

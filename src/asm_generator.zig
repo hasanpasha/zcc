@@ -6,8 +6,8 @@ pub const Arch = enum {
     x86_64,
 };
 
-pub const ProgramASM = union(Arch) {
-    x86_64: x86_64.as.Program,
+pub const AIR = union(Arch) {
+    x86_64: x86_64.AIR,
 
     pub fn format(
         self: @This(),
@@ -18,7 +18,7 @@ pub const ProgramASM = union(Arch) {
         }
     }
 
-    pub fn emit(self: ProgramASM, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn emit(self: AIR, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (self) {
             inline else => |p| try p.emit(writer),
         }
@@ -26,7 +26,7 @@ pub const ProgramASM = union(Arch) {
 
     pub const FileEmitError = std.fs.File.OpenError || std.Io.Writer.Error;
 
-    pub fn emitToFile(self: ProgramASM, path: []const u8) FileEmitError!void {
+    pub fn emitToFile(self: AIR, path: []const u8) FileEmitError!void {
         const file = try std.fs.cwd().createFile(path, .{});
         defer file.close();
 
@@ -37,17 +37,17 @@ pub const ProgramASM = union(Arch) {
         try self.emit(writer);
     }
 
-    pub fn free(self: ProgramASM) void {
+    pub fn free(self: AIR) void {
         switch (self) {
             inline else => |p| p.free(),
         }
     }
 };
 
-const tacky_ir = @import("tacky_ir.zig");
+const TackyIR = @import("TackyIR.zig");
 
-pub fn generate(ir: tacky_ir.ProgramTackyIR, arch: Arch, allocator: std.mem.Allocator) ProgramASM {
+pub fn lower(ir: TackyIR, arch: Arch, allocator: std.mem.Allocator) AIR {
     return switch (arch) {
-        .x86_64 => .{ .x86_64 = x86_64.generate(ir, allocator) },
+        .x86_64 => .{ .x86_64 = x86_64.lower(ir, allocator) },
     };
 }

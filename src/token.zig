@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Location = @import("location.zig").Location;
+const Location = @import("Location.zig");
 
 pub const LocatedToken = struct { Token, Location };
 

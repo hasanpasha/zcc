@@ -1,27 +1,27 @@
 const std = @import("std");
 
-const tacky_ir = @import("../tacky_ir.zig");
-const as = @import("asm.zig");
+const TackyIR = @import("../TackyIR.zig");
+const AIR = @import("AIR.zig");
 
 const oneOf = @import("../utils.zig").oneOf;
 
 allocator: std.mem.Allocator,
 
-instructions: ?std.array_list.Managed(as.Instruction) = null,
+instructions: ?std.array_list.Managed(AIR.Instruction) = null,
 
-const Convertor = @This();
+const Lower = @This();
 
-pub fn convert(ir: tacky_ir.ProgramTackyIR, allocator: std.mem.Allocator) as.Program {
+pub fn lower(ir: TackyIR, allocator: std.mem.Allocator) AIR {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
-    var self = Convertor{ .allocator = arena.allocator() };
+    var self = Lower{ .allocator = arena.allocator() };
 
     const main_subroutine = self.subroutine(ir.main);
 
     return .{ .main_subroutine = main_subroutine, .arena = arena };
 }
 
-fn subroutine(self: *Convertor, function: tacky_ir.FunctionTackyIR) as.Subroutine {
+fn subroutine(self: *Lower, function: TackyIR.Function) AIR.Subroutine {
     const previous_instrs = self.instructions;
 
     self.instructions = .init(self.allocator);
@@ -35,7 +35,7 @@ fn subroutine(self: *Convertor, function: tacky_ir.FunctionTackyIR) as.Subroutin
     return .{ .name = function.identifier, .instructions = as_instrs };
 }
 
-fn instruction(self: *Convertor, instr: tacky_ir.Instruction) void {
+fn instruction(self: *Lower, instr: TackyIR.Instruction) void {
     switch (instr) {
         .ret => |val| self.addInstrs(&.{
             .{ .mov = .{
@@ -55,7 +55,7 @@ fn instruction(self: *Convertor, instr: tacky_ir.Instruction) void {
                     .{ .set_cc = .{ .cond_code = .e, .dst = dst } },
                 });
             } else {
-                const operator: as.Instruction.Unary.Operator = switch (unary.operator) {
+                const operator: AIR.Instruction.Unary.Operator = switch (unary.operator) {
                     .complement => .not,
                     .negate => .neg,
                     else => unreachable,
@@ -96,7 +96,7 @@ fn instruction(self: *Convertor, instr: tacky_ir.Instruction) void {
                 .greater,
                 .greater_equal,
             })) {
-                const code: as.Instruction.CondCode = switch (binary.operator) {
+                const code: AIR.Instruction.CondCode = switch (binary.operator) {
                     .equal => .e,
                     .not_equal => .ne,
                     .less => .l,
@@ -112,7 +112,7 @@ fn instruction(self: *Convertor, instr: tacky_ir.Instruction) void {
                     .{ .set_cc = .{ .cond_code = code, .dst = dst } },
                 });
             } else {
-                const operator: as.Instruction.Binary.Operator = switch (binary.operator) {
+                const operator: AIR.Instruction.Binary.Operator = switch (binary.operator) {
                     .add => .add,
                     .subtract => .sub,
                     .multiply => .imul,
@@ -166,7 +166,7 @@ fn instruction(self: *Convertor, instr: tacky_ir.Instruction) void {
     }
 }
 
-fn operand(self: *Convertor, value: tacky_ir.Value) as.Operand {
+fn operand(self: *Lower, value: TackyIR.Value) AIR.Operand {
     _ = self;
     return switch (value) {
         .constant => |constant| .{ .imm = @truncate(constant) },
@@ -174,10 +174,10 @@ fn operand(self: *Convertor, value: tacky_ir.Value) as.Operand {
     };
 }
 
-fn addInstr(self: *Convertor, instr: as.Instruction) void {
+fn addInstr(self: *Lower, instr: AIR.Instruction) void {
     self.instructions.?.append(instr) catch @panic("OOM");
 }
 
-fn addInstrs(self: *Convertor, instr: []const as.Instruction) void {
+fn addInstrs(self: *Lower, instr: []const AIR.Instruction) void {
     self.instructions.?.appendSlice(instr) catch @panic("OOM");
 }

@@ -1,7 +1,7 @@
 //! replace all pseudo operands with stack operands
 const std = @import("std");
 
-const as = @import("asm.zig");
+const AIR = @import("AIR.zig");
 
 allocator: std.mem.Allocator,
 
@@ -10,7 +10,7 @@ pseudo_stack_map: std.StringHashMap(isize),
 
 const PseudoEliminator = @This();
 
-pub fn eliminate(program: as.Program, allocator: std.mem.Allocator) as.Program {
+pub fn eliminate(program: AIR, allocator: std.mem.Allocator) AIR {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self = PseudoEliminator{
@@ -24,8 +24,8 @@ pub fn eliminate(program: as.Program, allocator: std.mem.Allocator) as.Program {
     return .{ .main_subroutine = main_subroutine, .arena = arena };
 }
 
-fn subroutine(self: *PseudoEliminator, sub: as.Subroutine) as.Subroutine {
-    var instrs = std.array_list.Managed(as.Instruction).initCapacity(
+fn subroutine(self: *PseudoEliminator, sub: AIR.Subroutine) AIR.Subroutine {
+    var instrs = std.array_list.Managed(AIR.Instruction).initCapacity(
         self.allocator,
         sub.instructions.len + 1,
     ) catch @panic("OOM");
@@ -34,16 +34,16 @@ fn subroutine(self: *PseudoEliminator, sub: as.Subroutine) as.Subroutine {
             inline else => |_instr, tag| {
                 const T = @TypeOf(_instr);
                 var _instr_fixed: T = _instr;
-                if (T == as.Operand) {
+                if (T == AIR.Operand) {
                     _instr_fixed = self.operand(_instr);
                 } else if (@typeInfo(T) == .@"struct") {
                     inline for (std.meta.fields(T)) |field| {
-                        if (field.type == as.Operand)
+                        if (field.type == AIR.Operand)
                             @field(_instr_fixed, field.name) = self.operand(@field(_instr, field.name));
                     }
                 }
 
-                instrs.appendAssumeCapacity(@unionInit(as.Instruction, @tagName(tag), _instr_fixed));
+                instrs.appendAssumeCapacity(@unionInit(AIR.Instruction, @tagName(tag), _instr_fixed));
             },
         }
     }
@@ -54,7 +54,7 @@ fn subroutine(self: *PseudoEliminator, sub: as.Subroutine) as.Subroutine {
     return .{ .name = sub.name, .instructions = new_instrs };
 }
 
-fn operand(self: *PseudoEliminator, op: as.Operand) as.Operand {
+fn operand(self: *PseudoEliminator, op: AIR.Operand) AIR.Operand {
     return switch (op) {
         .pseudo => |name| new_operand: {
             const index = self.pseudo_stack_map.get(name) orelse new_index: {
@@ -64,6 +64,6 @@ fn operand(self: *PseudoEliminator, op: as.Operand) as.Operand {
             };
             break :new_operand .{ .stack = index };
         },
-        inline else => |_operand, tag| @unionInit(as.Operand, @tagName(tag), _operand),
+        inline else => |_operand, tag| @unionInit(AIR.Operand, @tagName(tag), _operand),
     };
 }

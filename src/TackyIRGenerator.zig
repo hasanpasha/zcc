@@ -1,12 +1,11 @@
 const std = @import("std");
 
-const lir = @import("semantic_analyzer/lir.zig");
+const LIR = @import("semantic_analyzer/LIR.zig");
 
-const tacky_ir = @import("tacky_ir.zig");
-const ProgramTackyIR = tacky_ir.ProgramTackyIR;
-const FunctionTackyIR = tacky_ir.FunctionTackyIR;
-const Instruction = tacky_ir.Instruction;
-const Value = tacky_ir.Value;
+const TackyIR = @import("TackyIR.zig");
+const Function = TackyIR.Function;
+const Instruction = TackyIR.Instruction;
+const Value = TackyIR.Value;
 
 const oneOf = @import("utils.zig").oneOf;
 
@@ -17,7 +16,7 @@ label_counter: usize = 0,
 
 const TackyIRGenerator = @This();
 
-pub fn generate(ast_program: lir.Program, allocator: std.mem.Allocator) ProgramTackyIR {
+pub fn lower(ast: LIR, allocator: std.mem.Allocator) TackyIR {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self = TackyIRGenerator{
@@ -25,12 +24,12 @@ pub fn generate(ast_program: lir.Program, allocator: std.mem.Allocator) ProgramT
         .allocator = arena.allocator(),
     };
 
-    const func = self.function(ast_program.main_function);
+    const func = self.function(ast.main_function);
 
     return .{ .main = func, .arena = arena };
 }
 
-fn function(self: *TackyIRGenerator, ast_func: lir.Function) FunctionTackyIR {
+fn function(self: *TackyIRGenerator, ast_func: LIR.Function) Function {
     const previous_instrs = self.instrs;
 
     self.instrs = .init(self.allocator);
@@ -47,14 +46,14 @@ fn function(self: *TackyIRGenerator, ast_func: lir.Function) FunctionTackyIR {
     return .{ .identifier = ast_func.name, .instructions = instrs };
 }
 
-fn instruction(self: *TackyIRGenerator, item: lir.BlockItem) void {
+fn instruction(self: *TackyIRGenerator, item: LIR.BlockItem) void {
     switch (item) {
         .declaration => |decl| self.declInstruction(decl),
         .statement => |stmt| self.stmtInstruction(stmt),
     }
 }
 
-fn declInstruction(self: *TackyIRGenerator, decl: lir.Declaration) void {
+fn declInstruction(self: *TackyIRGenerator, decl: LIR.Declaration) void {
     switch (decl) {
         .variable => |variable| {
             if (variable.init) |init| {
@@ -66,7 +65,7 @@ fn declInstruction(self: *TackyIRGenerator, decl: lir.Declaration) void {
     }
 }
 
-fn stmtInstruction(self: *TackyIRGenerator, stmt: lir.Statement) void {
+fn stmtInstruction(self: *TackyIRGenerator, stmt: LIR.Statement) void {
     switch (stmt) {
         .@"return" => |expr| {
             const val = self.value(expr);
@@ -103,7 +102,7 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: lir.Statement) void {
     }
 }
 
-fn value(self: *TackyIRGenerator, expr: lir.Expression) Value {
+fn value(self: *TackyIRGenerator, expr: LIR.Expression) Value {
     return switch (expr) {
         .int_lit => |int| .{ .constant = int },
         .binary => |binary| result: {
@@ -247,7 +246,7 @@ fn value(self: *TackyIRGenerator, expr: lir.Expression) Value {
             if (assignment.operator == .equals) {
                 self.addInstr(.{ .copy = .{ .src = rhs, .dst = dst } });
             } else {
-                const operator: tacky_ir.Instruction.Binary.Operator = switch (assignment.operator) {
+                const operator: TackyIR.Instruction.Binary.Operator = switch (assignment.operator) {
                     .plus_equals => .add,
                     .minus_equals => .subtract,
                     .asterisk_equals => .multiply,

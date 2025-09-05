@@ -1,16 +1,16 @@
 const std = @import("std");
 
-pub const as = @import("asm.zig");
+pub const AIR = @import("AIR.zig");
 
 const oneOf = @import("../utils.zig").oneOf;
 
 allocator: std.mem.Allocator,
 
-instructions: ?std.array_list.Managed(as.Instruction) = null,
+instructions: ?std.array_list.Managed(AIR.Instruction) = null,
 
 const InstructionFixer = @This();
 
-pub fn fix(old: as.Program, allocator: std.mem.Allocator) as.Program {
+pub fn fix(old: AIR, allocator: std.mem.Allocator) AIR {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self: InstructionFixer = .{ .allocator = arena.allocator() };
@@ -20,7 +20,7 @@ pub fn fix(old: as.Program, allocator: std.mem.Allocator) as.Program {
     return .{ .main_subroutine = new_subroutine, .arena = arena };
 }
 
-fn subroutine(self: *InstructionFixer, sub: as.Subroutine) as.Subroutine {
+fn subroutine(self: *InstructionFixer, sub: AIR.Subroutine) AIR.Subroutine {
     const previous_instrs = self.instructions;
 
     self.instructions = .init(self.allocator);
@@ -34,7 +34,7 @@ fn subroutine(self: *InstructionFixer, sub: as.Subroutine) as.Subroutine {
     return .{ .name = sub.name, .instructions = instrs };
 }
 
-fn instruction(self: *InstructionFixer, instr: as.Instruction) void {
+fn instruction(self: *InstructionFixer, instr: AIR.Instruction) void {
     switch (instr) {
         .allocate_stack, .cdq, .ret, .unary => self.addInstr(instr),
         .idiv => |div| self.addInstrs(&.{
@@ -46,7 +46,7 @@ fn instruction(self: *InstructionFixer, instr: as.Instruction) void {
         }),
         .mov => |mov| {
             if (mov.src == .stack and mov.dst == .stack) {
-                const temp = as.Operand{ .reg = .r10d };
+                const temp = AIR.Operand{ .reg = .r10d };
                 self.addInstrs(&.{
                     .{ .mov = .{ .src = mov.src, .dst = temp } },
                     .{ .mov = .{ .src = temp, .dst = mov.dst } },
@@ -60,7 +60,7 @@ fn instruction(self: *InstructionFixer, instr: as.Instruction) void {
                 (binary.operator == .imul and binary.src2 == .stack) or
                 (oneOf(binary.operator, &.{ .@"and", .@"or", .xor }) and binary.src2 == .stack))
             {
-                const r10 = as.Operand{ .reg = .r10d };
+                const r10 = AIR.Operand{ .reg = .r10d };
                 self.addInstrs(&.{
                     .{ .mov = .{ .src = binary.src2, .dst = r10 } },
                     .{ .binary = .{ .operator = binary.operator, .src1 = binary.src1, .src2 = r10 } },
@@ -77,13 +77,13 @@ fn instruction(self: *InstructionFixer, instr: as.Instruction) void {
         },
         .cmp => |cmp| {
             if (cmp.src1 == .stack and cmp.src2 == .stack) {
-                const r10 = as.Operand{ .reg = .r10d };
+                const r10 = AIR.Operand{ .reg = .r10d };
                 self.addInstrs(&.{
                     .{ .mov = .{ .src = cmp.src1, .dst = r10 } },
                     .{ .cmp = .{ .src1 = r10, .src2 = cmp.src2 } },
                 });
             } else if (cmp.src2 == .imm) {
-                const r11 = as.Operand{ .reg = .r11d };
+                const r11 = AIR.Operand{ .reg = .r11d };
                 self.addInstrs(&.{
                     .{ .mov = .{ .src = cmp.src2, .dst = r11 } },
                     .{ .cmp = .{ .src1 = cmp.src1, .src2 = r11 } },
@@ -96,11 +96,11 @@ fn instruction(self: *InstructionFixer, instr: as.Instruction) void {
     }
 }
 
-fn addInstr(self: *InstructionFixer, instr: as.Instruction) void {
+fn addInstr(self: *InstructionFixer, instr: AIR.Instruction) void {
     self.instructions.?.append(instr) catch @panic("OOM");
 }
 
-fn addInstrs(self: *InstructionFixer, instrs: []const as.Instruction) void {
+fn addInstrs(self: *InstructionFixer, instrs: []const AIR.Instruction) void {
     for (instrs) |instr| {
         self.addInstr(instr);
     }

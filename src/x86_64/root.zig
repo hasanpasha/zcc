@@ -1,13 +1,14 @@
-pub const as = @import("asm.zig");
-
 const std = @import("std");
-const tacky_ir = @import("../tacky_ir.zig");
-const Convertor = @import("Convertor.zig");
+
+pub const AIR = @import("AIR.zig");
+const TackyIR = @import("../TackyIR.zig");
+
+const Lower = @import("Lower.zig");
 const PseudoEliminator = @import("PseudoEliminator.zig");
 const InstructionFixer = @import("InstructionFixer.zig");
 
-pub fn generate(ir: tacky_ir.ProgramTackyIR, allocator: std.mem.Allocator) as.Program {
-    var initial = Convertor.convert(ir, allocator);
+pub fn lower(ir: TackyIR, allocator: std.mem.Allocator) AIR {
+    var initial = Lower.lower(ir, allocator);
     defer initial.free();
 
     var eliminated_pseudo = PseudoEliminator.eliminate(initial, allocator);
