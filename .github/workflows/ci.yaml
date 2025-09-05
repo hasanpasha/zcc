@@ -1,6 +1,6 @@
 jobs:
   test:
-    run-on: ubuntu-latest
+    runs-on: ubuntu-latest
     name: Book test
     steps:
       - uses: actions/checkout@v3
