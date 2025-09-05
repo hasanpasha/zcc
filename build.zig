@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const clap_mod = clap_dep.module("clap");
 
     const zcc_mod = b.addModule("zcc", .{
-        .root_source_file = b.path("main.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
