@@ -1,0 +1,3 @@
+[submodule "book-tests"]
+	path = book-tests
+	url = https://github.com/nlsandler/writing-a-c-compiler-tests

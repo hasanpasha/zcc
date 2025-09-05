@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
     const zcc_run_step = b.step("run", "run zcc");
     zcc_run_step.dependOn(&zcc_run.step);
 
-    const book_test = b.addSystemCommand(&.{ "./writing-a-c-compiler-tests/test_compiler", "./zig-out/bin/zcc", "--verbose" });
+    const book_test = b.addSystemCommand(&.{ "./book-tests/test_compiler", "./zig-out/bin/zcc", "--verbose" });
     book_test.step.dependOn(&zcc_install.step);
     if (b.args) |args| {
         book_test.addArgs(args);
