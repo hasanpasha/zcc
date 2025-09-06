@@ -120,7 +120,7 @@ pub fn main() !void {
     defer ast.free();
 
     if (options.parse) {
-        std.log.info("{f}", .{std.fmt.alt(ast, .prettyFmt)});
+        std.log.info("{f}", .{ast});
         exit(0);
     }
 
