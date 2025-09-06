@@ -98,12 +98,10 @@ pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {
         },
     };
 
-    const tok = switch (tok_result) {
-        .ok => |val| val,
-        .err => |err| return .Err(err),
+    return switch (tok_result) {
+        .ok => |tok| .Ok(.{ tok, start_loc }),
+        .err => |err| .Err(err),
     };
-
-    return .Ok(.{ tok, start_loc });
 }
 
 pub fn format(

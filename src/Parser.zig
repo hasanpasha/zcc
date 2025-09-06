@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const Lexer = @import("Lexer.zig");
 
 const AST = @import("AST.zig");
@@ -31,7 +32,11 @@ pub const Error = union(enum) {
     not_expression_token: Token,
 
     pub const UnexpectedTokenError = struct {
-        expected: []const TokenKind,
+        expected: union(enum) {
+            none,
+            one: TokenKind,
+            many: []const TokenKind,
+        },
         found: Token,
         location: Location,
 
@@ -39,29 +44,29 @@ pub const Error = union(enum) {
             self: @This(),
             writer: *std.Io.Writer,
         ) std.Io.Writer.Error!void {
-            if (self.expected.len == 0) {
-                try writer.print("expected no token but found {f} at {f}", .{
+            switch (self.expected) {
+                .none => try writer.print("expected no token but found {f} at {f}", .{
                     self.found,
                     std.fmt.alt(self.location, .readableFmt),
-                });
-            } else if (self.expected.len == 1) {
-                try writer.print("expected token of kind {} but found {f} at {f}", .{
-                    self.expected[0],
+                }),
+                .one => |kind| try writer.print("expected token of kind {} but found {f} at {f}", .{
+                    kind,
                     self.found,
                     std.fmt.alt(self.location, .readableFmt),
-                });
-            } else {
-                try writer.print("expected one of token kinds {{ ", .{});
-                for (self.expected, 1..) |kind, i| {
-                    try writer.print("{}", .{kind});
-                    if (i < self.expected.len) {
-                        try writer.writeAll(", ");
+                }),
+                .many => |kinds| {
+                    try writer.print("expected one of token kinds {{ ", .{});
+                    for (kinds, 1..) |kind, i| {
+                        try writer.print("{}", .{kind});
+                        if (i < kinds.len) {
+                            try writer.writeAll(", ");
+                        }
                     }
-                }
-                try writer.print(" }} but found {f} at {f}", .{
-                    self.found,
-                    std.fmt.alt(self.location, .readableFmt),
-                });
+                    try writer.print(" }} but found {f} at {f}", .{
+                        self.found,
+                        std.fmt.alt(self.location, .readableFmt),
+                    });
+                },
             }
         }
     };
@@ -83,23 +88,6 @@ pub const Error = union(enum) {
 
 pub fn ParserResult(OkType: type) type {
     return Result(OkType, Error);
-}
-
-pub fn format(
-    self: @This(),
-    writer: *std.Io.Writer,
-) std.Io.Writer.Error!void {
-    try writer.print("Parser{{ lexer: {f}, current: ", .{self.lexer});
-    if (self.current) |cur| {
-        try printlocatedToken(cur, writer);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(", peek: ");
-    if (self.peek) |peek| {
-        try printlocatedToken(peek, writer);
-    }
-    try writer.writeAll(" }");
 }
 
 pub fn printlocatedToken(lt: LocatedToken, writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -126,11 +114,8 @@ pub fn parse(lexer: Lexer, allocator: std.mem.Allocator) ParserResult(AST) {
 fn function(self: *Parser) ParserResult(AST.Function) {
     if (self.consume(.int).maybe_err()) |err| return .Err(err);
 
-    const identifier: AST.Identifier = switch (self.expect(.identifier)) {
-        .ok => |val| .{
-            .name = val.@"0".identifier,
-            .location = val.@"1",
-        },
+    const name = switch (self.expectIdentifier()) {
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -146,13 +131,13 @@ fn function(self: *Parser) ParserResult(AST.Function) {
     if (self.current) |tok|
         return .Err(.{
             .unexpected_token = .{
-                .expected = &.{},
+                .expected = .none,
                 .found = tok.@"0",
                 .location = tok.@"1",
             },
         });
 
-    return .Ok(.{ .name = identifier, .body = body });
+    return .Ok(.{ .name = name, .body = body });
 }
 
 fn block(self: *Parser) ParserResult(AST.Block) {
@@ -170,7 +155,9 @@ fn block(self: *Parser) ParserResult(AST.Block) {
 }
 
 fn blockItem(self: *Parser) ParserResult(AST.BlockItem) {
-    const current, _ = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
+    const current, _ = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
+    });
 
     return switch (current) {
         .int => self.declarationItem(),
@@ -198,11 +185,8 @@ fn statementItem(self: *Parser) ParserResult(AST.BlockItem) {
 fn variableDecl(self: *Parser) ParserResult(AST.Declaration) {
     if (self.consume(.int).maybe_err()) |err| return .Err(err);
 
-    const identifier: AST.Identifier = switch (self.expect(.identifier)) {
-        .ok => |val| .{
-            .name = val.@"0".identifier,
-            .location = val.@"1",
-        },
+    const identifier = switch (self.expectIdentifier()) {
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -289,11 +273,8 @@ fn ifStmt(self: *Parser) ParserResult(Statement) {
 
 fn gotoStmt(self: *Parser) ParserResult(Statement) {
     if (self.consume(.goto).maybe_err()) |err| return .Err(err);
-    const target: AST.Identifier = switch (self.expect(.identifier)) {
-        .ok => |val| .{
-            .name = val.@"0".identifier,
-            .location = val.@"1",
-        },
+    const target = switch (self.expectIdentifier()) {
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
     if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
@@ -302,11 +283,8 @@ fn gotoStmt(self: *Parser) ParserResult(Statement) {
 }
 
 fn labeledStmtStmt(self: *Parser) ParserResult(Statement) {
-    const label: AST.Identifier = switch (self.expect(.identifier)) {
-        .ok => |val| .{
-            .name = val.@"0".identifier,
-            .location = val.@"1",
-        },
+    const label = switch (self.expectIdentifier()) {
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
 
@@ -332,29 +310,24 @@ fn compoundStmt(self: *Parser) ParserResult(Statement) {
 
 const Precedence = enum {
     none,
-    assignment, // "="|"+="|"-="|"*="|"/="|"%="|"<<="|">>="
-    ternary, // "?"|":"
-    logical_or, // "||"
-    logical_and, // "&&"
-    bitwise_or, // "|"
-    bitwise_xor, // "^"
-    bitwise_and, // "&"
-    equality, // "=="|"!="
-    comparison, // "<"|"<="|">"|">="
-    shift, // "<<"|">>"
-    term, // "+-"
-    factor, // "*/%"
-    lhs_unary, // "+"|"-"|"~"|"!"|"++"|"--"
-    rhs_unary, // "++"|"--"
+    assignment, // = += -= *= /= %= <<= >>=
+    ternary, //  ? :
+    logical_or, // |
+    logical_and, // &&
+    bitwise_or, // ||
+    bitwise_xor, // ^
+    bitwise_and, // &
+    equality, // == !=
+    comparison, // < <= > >=
+    shift, // << >>
+    term, // + -
+    factor, // * / %
+    lhs_unary, // + - ~ ! ++ --
+    rhs_unary, // ++ --
     primary,
 
     pub fn gt(self: Precedence, other: Precedence) bool {
         return @intFromEnum(self) > @intFromEnum(other);
-    }
-
-    /// lesser than or equal
-    pub fn le(self: Precedence, other: Precedence) bool {
-        return @intFromEnum(self) <= @intFromEnum(other);
     }
 
     /// return one higher precedence
@@ -366,7 +339,7 @@ const Precedence = enum {
 const PrecedenceRule = struct {
     prefix: *const fn (parser: *Parser) ParserResult(Expression) = no_unary,
     infix: *const fn (parser: *Parser, lhs: *Expression) ParserResult(Expression) = no_binary,
-    precedence: Precedence = .none,
+    prec: Precedence = .none,
 
     fn no_unary(parser: *Parser) ParserResult(Expression) {
         return .Err(Error{ .not_expression_token = parser.current.?.@"0" });
@@ -380,46 +353,48 @@ const PrecedenceRule = struct {
 
 const precedence_rules: std.EnumArray(TokenKind, PrecedenceRule) = .initDefault(.{}, .{
     .lparen = .{ .prefix = group },
-    .int_lit = .{ .prefix = intLitExpr, .precedence = .primary },
-    .tilde = .{ .prefix = leftUnary, .precedence = .lhs_unary },
-    .minus = .{ .prefix = leftUnary, .infix = binary, .precedence = .term },
-    .plus = .{ .prefix = leftUnary, .infix = binary, .precedence = .term },
-    .asterisk = .{ .infix = binary, .precedence = .factor },
-    .slash = .{ .infix = binary, .precedence = .factor },
-    .percent = .{ .infix = binary, .precedence = .factor },
-    .amp = .{ .infix = binary, .precedence = .bitwise_and },
-    .verbar = .{ .infix = binary, .precedence = .bitwise_or },
-    .hat = .{ .infix = binary, .precedence = .bitwise_xor },
-    .lt_lt = .{ .infix = binary, .precedence = .shift },
-    .gt_gt = .{ .infix = binary, .precedence = .shift },
-    .excl = .{ .prefix = leftUnary, .precedence = .lhs_unary },
-    .amp_amp = .{ .infix = binary, .precedence = .logical_and },
-    .verbar_verbar = .{ .infix = binary, .precedence = .logical_or },
-    .equals_equals = .{ .infix = binary, .precedence = .equality },
-    .excl_equals = .{ .infix = binary, .precedence = .equality },
-    .lt = .{ .infix = binary, .precedence = .comparison },
-    .gt = .{ .infix = binary, .precedence = .comparison },
-    .lt_equals = .{ .infix = binary, .precedence = .comparison },
-    .gt_equals = .{ .infix = binary, .precedence = .comparison },
-    .identifier = .{ .prefix = variable, .precedence = .primary },
-    .equals = .{ .infix = assignment, .precedence = .assignment },
-    .plus_equals = .{ .infix = assignment, .precedence = .assignment },
-    .minus_equals = .{ .infix = assignment, .precedence = .assignment },
-    .asterisk_equals = .{ .infix = assignment, .precedence = .assignment },
-    .slash_equals = .{ .infix = assignment, .precedence = .assignment },
-    .percent_equals = .{ .infix = assignment, .precedence = .assignment },
-    .amp_equals = .{ .infix = assignment, .precedence = .assignment },
-    .verbar_equals = .{ .infix = assignment, .precedence = .assignment },
-    .hat_equals = .{ .infix = assignment, .precedence = .assignment },
-    .lt_lt_equals = .{ .infix = assignment, .precedence = .assignment },
-    .gt_gt_equals = .{ .infix = assignment, .precedence = .assignment },
-    .plus_plus = .{ .prefix = leftUnary, .infix = rhsUnary, .precedence = .rhs_unary },
-    .minus_minus = .{ .prefix = leftUnary, .infix = rhsUnary, .precedence = .rhs_unary },
-    .quest = .{ .infix = ternary, .precedence = .ternary },
+    .int_lit = .{ .prefix = intLitExpr, .prec = .primary },
+    .identifier = .{ .prefix = variable, .prec = .primary },
+    .tilde = .{ .prefix = leftUnary, .prec = .lhs_unary },
+    .minus = .{ .prefix = leftUnary, .infix = binary, .prec = .term },
+    .plus = .{ .prefix = leftUnary, .infix = binary, .prec = .term },
+    .asterisk = .{ .infix = binary, .prec = .factor },
+    .slash = .{ .infix = binary, .prec = .factor },
+    .percent = .{ .infix = binary, .prec = .factor },
+    .amp = .{ .infix = binary, .prec = .bitwise_and },
+    .verbar = .{ .infix = binary, .prec = .bitwise_or },
+    .hat = .{ .infix = binary, .prec = .bitwise_xor },
+    .lt_lt = .{ .infix = binary, .prec = .shift },
+    .gt_gt = .{ .infix = binary, .prec = .shift },
+    .excl = .{ .prefix = leftUnary, .prec = .lhs_unary },
+    .amp_amp = .{ .infix = binary, .prec = .logical_and },
+    .verbar_verbar = .{ .infix = binary, .prec = .logical_or },
+    .equals_equals = .{ .infix = binary, .prec = .equality },
+    .excl_equals = .{ .infix = binary, .prec = .equality },
+    .lt = .{ .infix = binary, .prec = .comparison },
+    .gt = .{ .infix = binary, .prec = .comparison },
+    .lt_equals = .{ .infix = binary, .prec = .comparison },
+    .gt_equals = .{ .infix = binary, .prec = .comparison },
+    .equals = .{ .infix = assignment, .prec = .assignment },
+    .plus_equals = .{ .infix = assignment, .prec = .assignment },
+    .minus_equals = .{ .infix = assignment, .prec = .assignment },
+    .asterisk_equals = .{ .infix = assignment, .prec = .assignment },
+    .slash_equals = .{ .infix = assignment, .prec = .assignment },
+    .percent_equals = .{ .infix = assignment, .prec = .assignment },
+    .amp_equals = .{ .infix = assignment, .prec = .assignment },
+    .verbar_equals = .{ .infix = assignment, .prec = .assignment },
+    .hat_equals = .{ .infix = assignment, .prec = .assignment },
+    .lt_lt_equals = .{ .infix = assignment, .prec = .assignment },
+    .gt_gt_equals = .{ .infix = assignment, .prec = .assignment },
+    .plus_plus = .{ .prefix = leftUnary, .infix = rhsUnary, .prec = .rhs_unary },
+    .minus_minus = .{ .prefix = leftUnary, .infix = rhsUnary, .prec = .rhs_unary },
+    .quest = .{ .infix = ternary, .prec = .ternary },
 });
 
 fn peekPrecedenceRule(self: *Parser) ParserResult(PrecedenceRule) {
-    const next_token, _ = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
+    const next_token, _ = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
+    });
     return .Ok(precedence_rules.get(next_token.kind()));
 }
 
@@ -440,7 +415,7 @@ fn parsePrecedence(self: *Parser, precedence: Precedence) ParserResult(*Expressi
             .err => |err| return .Err(err),
         };
 
-        if (precedence.gt(rule_next.precedence)) break;
+        if (precedence.gt(rule_next.prec)) break;
 
         lhs = switch (rule_next.infix(self, lhs)) {
             .ok => |val| self.onHeap(val),
@@ -457,11 +432,14 @@ fn expression(self: *Parser) ParserResult(*Expression) {
 
 fn group(self: *Parser) ParserResult(Expression) {
     if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+
     const expr = switch (self.expression()) {
         .ok => |val| val.*,
         .err => |err| return .Err(err),
     };
+
     if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+
     return .Ok(expr);
 }
 
@@ -486,10 +464,7 @@ fn leftUnary(self: *Parser) ParserResult(Expression) {
         .plus_plus,
         .minus_minus,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| ltokToltk(val),
         .err => |err| return .Err(err),
     };
 
@@ -509,10 +484,7 @@ fn rhsUnary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
         .plus_plus,
         .minus_minus,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| ltokToltk(val),
         .err => |err| return .Err(err),
     };
 
@@ -544,14 +516,11 @@ fn binary(self: *Parser, lhs: *Expression) ParserResult(Expression) {
         .gt_equals,
         .equals,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| ltokToltk(val),
         .err => |err| return .Err(err),
     };
 
-    const prec = precedence_rules.get(operator.@"0").precedence.inc();
+    const prec = precedence_rules.get(operator.@"0").prec.inc();
     const rhs = switch (self.parsePrecedence(prec)) {
         .ok => |val| val,
         .err => |err| return .Err(err),
@@ -578,14 +547,11 @@ fn assignment(self: *Parser, lhs: *Expression) ParserResult(Expression) {
         .lt_lt_equals,
         .gt_gt_equals,
     })) {
-        .ok => |val| .{
-            val.@"0".kind(),
-            val.@"1",
-        },
+        .ok => |val| ltokToltk(val),
         .err => |err| return .Err(err),
     };
 
-    const prec = precedence_rules.get(operator.@"0").precedence;
+    const prec = precedence_rules.get(operator.@"0").prec;
     const rhs = switch (self.parsePrecedence(prec)) {
         .ok => |val| val,
         .err => |err| return .Err(err),
@@ -599,14 +565,11 @@ fn assignment(self: *Parser, lhs: *Expression) ParserResult(Expression) {
 }
 
 fn variable(self: *Parser) ParserResult(Expression) {
-    const identifier: AST.Identifier = switch (self.expect(.identifier)) {
-        .ok => |val| .{
-            .name = val.@"0".identifier,
-            .location = val.@"1",
-        },
+    const name = switch (self.expectIdentifier()) {
+        .ok => |val| val,
         .err => |err| return .Err(err),
     };
-    return .Ok(.{ .variable = identifier });
+    return .Ok(.{ .variable = name });
 }
 
 fn ternary(self: *Parser, cond: *Expression) ParserResult(Expression) {
@@ -632,37 +595,41 @@ fn ternary(self: *Parser, cond: *Expression) ParserResult(Expression) {
 }
 
 fn expectOneOf(self: *Parser, kinds: []const TokenKind) ParserResult(LocatedToken) {
-    const current = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
-
-    if (oneOf(current.@"0".kind(), kinds)) {
-        if (self.advance().maybe_err()) |err| return .Err(err);
-        return .Ok(current);
-    }
-
-    return .Err(.{
-        .unexpected_token = .{
-            .expected = kinds,
-            .found = current.@"0",
-            .location = current.@"1",
-        },
+    const tok, const loc = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
     });
+
+    if (!oneOf(tok.kind(), kinds)) return .Err(.{ .unexpected_token = .{
+        .expected = .{ .many = kinds },
+        .found = tok,
+        .location = loc,
+    } });
+
+    return .Ok(self.advance().unwrap().?);
 }
 
 fn expect(self: *Parser, kind: TokenKind) ParserResult(LocatedToken) {
-    const current = self.current orelse return .Err(.{ .unexpected_end_of_token_stream = self.lexer.location });
-
-    if (current.@"0" == kind) {
-        if (self.advance().maybe_err()) |err| return .Err(err);
-        return .Ok(current);
-    }
-
-    return .Err(.{
-        .unexpected_token = .{
-            .expected = self.allocator.dupe(TokenKind, &.{kind}) catch @panic("OOM"),
-            .found = current.@"0",
-            .location = current.@"1",
-        },
+    const tok, const loc = self.current orelse return .Err(.{
+        .unexpected_end_of_token_stream = self.lexer.location,
     });
+
+    if (tok != kind) return .Err(.{ .unexpected_token = .{
+        .expected = .{ .one = kind },
+        .found = tok,
+        .location = loc,
+    } });
+
+    return .Ok(self.advance().unwrap().?);
+}
+
+fn expectIdentifier(self: *Parser) ParserResult(AST.Identifier) {
+    return switch (self.expect(.identifier)) {
+        .ok => |ltok| .Ok(.{
+            .name = ltok.@"0".identifier,
+            .location = ltok.@"1",
+        }),
+        .err => |err| .Err(err),
+    };
 }
 
 fn consume(self: *Parser, kind: TokenKind) ParserResult(void) {
@@ -693,19 +660,23 @@ fn match(self: *Parser, kind: TokenKind) ?LocatedToken {
     return null;
 }
 
-fn mapLexerError(err: Lexer.Error) Parser.Error {
-    return .{ .lexer_error = err };
+fn peekTokenKind(self: *Parser) ?TokenKind {
+    if (self.peek) |peek|
+        return peek.@"0".kind();
+
+    return null;
+}
+
+inline fn ltokToltk(ltok: token.LocatedToken) LocatedTokenKind {
+    return .{ ltok.@"0".kind(), ltok.@"1" };
 }
 
 fn lexerNext(self: *Parser) ParserResult(?LocatedToken) {
-    return self.lexer.next().map_err(mapLexerError);
-}
-
-fn peekTokenKind(self: *Parser) ?TokenKind {
-    if (self.peek) |peek| {
-        return peek.@"0".kind();
-    }
-    return null;
+    return self.lexer.next().map_err(struct {
+        fn cb(err: Lexer.Error) Parser.Error {
+            return .{ .lexer_error = err };
+        }
+    }.cb);
 }
 
 const onHeap = @import("utils.zig").onHeap;
