@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 
 const x86_64 = @import("x86_64/root.zig");
 
@@ -9,22 +10,19 @@ pub const Arch = enum {
 pub const AIR = union(Arch) {
     x86_64: x86_64.AIR,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             inline else => |program| try writer.print("{f}", .{program}),
         }
     }
 
-    pub fn emit(self: AIR, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn emit(self: AIR, writer: *std.Io.Writer) Writer.Error!void {
         switch (self) {
             inline else => |p| try p.emit(writer),
         }
     }
 
-    pub const FileEmitError = std.fs.File.OpenError || std.Io.Writer.Error;
+    pub const FileEmitError = std.fs.File.OpenError || Writer.Error;
 
     pub fn emitToFile(self: AIR, path: []const u8) FileEmitError!void {
         const file = try std.fs.cwd().createFile(path, .{});

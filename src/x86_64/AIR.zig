@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 const Emitter = @import("Emitter.zig");
 
 const ASIR = @This();
@@ -7,14 +8,11 @@ main_subroutine: Subroutine,
 
 arena: std.heap.ArenaAllocator,
 
-pub fn format(
-    self: @This(),
-    writer: *std.Io.Writer,
-) std.Io.Writer.Error!void {
+pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
     try writer.print("X86_64Program{{ main_subroutine: {f} }}", .{self.main_subroutine});
 }
 
-pub fn emit(self: ASIR, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+pub fn emit(self: ASIR, writer: *std.Io.Writer) Writer.Error!void {
     try Emitter.emit(self, writer);
 }
 
@@ -26,10 +24,7 @@ pub const Subroutine = struct {
     name: []const u8,
     instructions: []const Instruction,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         try writer.writeAll("Subroutine{ instructions: { ");
         for (self.instructions, 1..) |instr, i| {
             try writer.print("{f}", .{instr});
@@ -74,10 +69,7 @@ pub const Instruction = union(InstructionKind) {
         src: Operand,
         dst: Operand,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("Mov{{ src: {f}, dst: {f} }}", .{
                 self.src,
                 self.dst,
@@ -94,10 +86,7 @@ pub const Instruction = union(InstructionKind) {
             not,
         };
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("Unary{{ operator: {}, operand: {f} }}", .{
                 self.operator,
                 self.operand,
@@ -123,10 +112,7 @@ pub const Instruction = union(InstructionKind) {
             sar,
         };
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("Binary{{ operator: {}, src1: {f}, src2: {f} }}", .{
                 self.operator,
                 self.src1,
@@ -139,10 +125,7 @@ pub const Instruction = union(InstructionKind) {
         src1: Operand,
         src2: Operand,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("Cmp{{ src1: {f}, src2: {f} }}", .{
                 self.src1,
                 self.src2,
@@ -163,10 +146,7 @@ pub const Instruction = union(InstructionKind) {
         cond_code: CondCode,
         target: []const u8,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("JmpCC{{ cond_code: {}, target: {s} }}", .{
                 self.cond_code,
                 self.target,
@@ -178,10 +158,7 @@ pub const Instruction = union(InstructionKind) {
         cond_code: CondCode,
         dst: Operand,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("SetCC{{ cond_code: {}, dst: {f} }}", .{
                 self.cond_code,
                 self.dst,
@@ -189,10 +166,7 @@ pub const Instruction = union(InstructionKind) {
         }
     };
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .idiv => |operand| try writer.print("Idiv{{ {f} }}", .{operand}),
             .allocate_stack => |size| try writer.print("AllocateStack{{ {} }}", .{size}),
@@ -317,10 +291,7 @@ pub const Operand = union(OperandKind) {
             @panic("Can't find name for this register, please check the implementation.");
         }
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("Reg{{ base: {}, part: {} }}", .{
                 self.base,
                 self.part,
@@ -328,10 +299,7 @@ pub const Operand = union(OperandKind) {
         }
     };
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .imm => |value| try writer.print("Imm{{ {} }}", .{value}),
             .reg => |reg| try writer.print("{any}", .{reg}),

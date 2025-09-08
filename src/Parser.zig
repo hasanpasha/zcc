@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 
 const Lexer = @import("Lexer.zig");
 
@@ -40,10 +41,7 @@ pub const Error = union(enum) {
         found: Token,
         location: Location,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             switch (self.expected) {
                 .none => try writer.print("expected no token but found {f} at {f}", .{
                     self.found,
@@ -71,10 +69,7 @@ pub const Error = union(enum) {
         }
     };
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .lexer_error => |err| try writer.print("lexer error: {f}", .{err}),
             .unexpected_end_of_token_stream => |l| try writer.print("unexpect end of the token stream at {f}", .{
@@ -90,7 +85,7 @@ pub fn ParserResult(OkType: type) type {
     return Result(OkType, Error);
 }
 
-pub fn printlocatedToken(lt: LocatedToken, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+pub fn printlocatedToken(lt: LocatedToken, writer: *std.Io.Writer) Writer.Error!void {
     const tok, const loc = lt;
     try writer.print("LocatedToken{{ token: {f}, location: {f} }}", .{ tok, loc });
 }

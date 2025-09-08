@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 
 const LIR = @import("LIR.zig");
 pub const BlockItemKind = LIR.BlockItemKind;
@@ -17,20 +18,14 @@ pub fn free(self: PIR) void {
     self.arena.deinit();
 }
 
-pub fn format(
-    self: @This(),
-    writer: *std.Io.Writer,
-) std.Io.Writer.Error!void {
+pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
     try writer.print("PIR{{ main_function: {f} }}", .{self.main_function});
 }
 
 pub const Block = struct {
     items: []const BlockItem,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         try writer.writeAll("Block{ ");
         for (self.items, 1..) |item, i| {
             try writer.print("{f}", .{item});
@@ -46,10 +41,7 @@ pub const Function = struct {
     name: []const u8,
     body: Block,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         try writer.print("Function{{ name: {s}, body: {{ {f} }}", .{
             self.name,
             self.body,
@@ -61,10 +53,7 @@ pub const BlockItem = union(BlockItemKind) {
     statement: Statement,
     declaration: Declaration,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .statement => |stmt| try writer.print("StmtItem{{ {f} }}", .{stmt}),
             .declaration => |decl| try writer.print("DeclItem{{ {f} }}", .{decl}),
@@ -94,10 +83,7 @@ pub const Statement = union(StatementKind) {
         then: *Statement,
         or_else: ?*Statement,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("IfStmt{{ cond: {f}, them: {f}, or_else: ", .{
                 self.cond,
                 self.then.*,
@@ -114,10 +100,7 @@ pub const Statement = union(StatementKind) {
         label: []const u8,
         stmt: *Statement,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("LabeledStmtStmt{{ label: {s}, stmt: {f} }}", .{
                 self.label,
                 self.stmt.*,
@@ -130,10 +113,7 @@ pub const Statement = union(StatementKind) {
         body: *Statement,
         label: []const u8,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("WhileStmt{{ cond: {f}, body: {f}, label: {s} }}", .{
                 self.cond,
                 self.body.*,
@@ -147,10 +127,7 @@ pub const Statement = union(StatementKind) {
         cond: Expression,
         label: []const u8,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("DoWhile{{ body: {f}, cond: {f}, label: {s} }}", .{
                 self.body.*,
                 self.cond,
@@ -175,10 +152,7 @@ pub const Statement = union(StatementKind) {
             decl: *Declaration,
             expr: ?Expression,
 
-            pub fn format(
-                self: @This(),
-                writer: *std.Io.Writer,
-            ) std.Io.Writer.Error!void {
+            pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
                 switch (self) {
                     .decl => |decl| try writer.print("DeclForInit{{ {f} }}", .{decl.*}),
                     .expr => |expr| {
@@ -193,10 +167,7 @@ pub const Statement = union(StatementKind) {
             }
         };
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("ForStmt{{ init: {f}, cond: ", .{self.init});
             if (self.cond) |cond| {
                 try writer.print("{f}", .{cond});
@@ -223,7 +194,7 @@ pub const Statement = union(StatementKind) {
         cases: []const Case,
         default: ?Default,
 
-        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) Writer.Error!void {
             try writer.print("SwitchStmt{{ cond: {f}, body: {f}, label: {s}, cases: {{ ", .{
                 self.cond,
                 self.body,
@@ -249,7 +220,7 @@ pub const Statement = union(StatementKind) {
         stmt: ?*Statement,
         label: []const u8,
 
-        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) Writer.Error!void {
             try writer.print("CaseStmt{{ expr: {f}, stmt: ", .{self.expr});
             if (self.stmt) |stmt| {
                 try writer.print("{f}", .{stmt});
@@ -264,7 +235,7 @@ pub const Statement = union(StatementKind) {
         stmt: ?*Statement = null,
         label: []const u8,
 
-        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) Writer.Error!void {
             try writer.print("DefaultStmt{{ ", .{});
             if (self.stmt) |stmt| {
                 try writer.print("{f}", .{stmt});
@@ -275,10 +246,7 @@ pub const Statement = union(StatementKind) {
         }
     };
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .@"return" => |expr| try writer.print("ReturnStmt{{ {f} }}", .{expr}),
             .expr => |expr| try writer.print("ExprStmt{{ {f} }}", .{expr}),

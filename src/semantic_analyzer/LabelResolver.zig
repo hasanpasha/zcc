@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 const LIR = @import("LIR.zig");
 const VIR = @import("VIR.zig");
 const Result = @import("../result.zig").Result;
@@ -15,10 +16,7 @@ const ErrorVariant = union(enum) {
     duplicate: []const u8,
     undeclared: []const u8,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .duplicate => |name| try writer.print("duplicate label '{s}'", .{name}),
             .undeclared => |name| try writer.print("undeclared label '{s}'", .{name}),
@@ -30,10 +28,7 @@ const ErrorItem = struct {
     err: ErrorVariant,
     loc: Location,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         try writer.print("{f} at {f}", .{
             self.err,
             std.fmt.alt(self.loc, .readableFmt),
@@ -44,10 +39,7 @@ const ErrorItem = struct {
 pub const Error = struct {
     errs: std.array_list.Managed(ErrorItem),
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         for (self.errs.items, 1..) |err, i| {
             try writer.print("{}: {f}\n", .{ i, err });
         }

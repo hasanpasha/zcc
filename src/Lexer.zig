@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 const token = @import("token.zig");
 const TokenKind = token.TokenKind;
 const Token = token.Token;
@@ -24,10 +25,7 @@ pub const Error = union(enum) {
         location: Location,
     };
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .unrecognized_character => |err| try writer.print("unrecognized character: '{c}' at {f}", .{
                 err.char,
@@ -104,10 +102,7 @@ pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {
     };
 }
 
-pub fn format(
-    self: @This(),
-    writer: *std.Io.Writer,
-) std.Io.Writer.Error!void {
+pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
     try writer.print("Lexer{{ src: \"{s}\", position: {}, location: {f}, ch: '{c}' }}", .{
         self.src,
         self.position,

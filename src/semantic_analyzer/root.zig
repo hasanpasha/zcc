@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 const AST = @import("../AST.zig");
 const LIR = @import("LIR.zig");
 const PIR = @import("PIR.zig");
@@ -13,10 +14,7 @@ pub const Error = union(enum) {
     label_resoluion: LabelResolution.Error,
     loop_label: StmtLabel.Error,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             inline else => |err| try writer.print("{f}", .{err}),
         }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 
 const TackyIR = @This();
 
@@ -10,14 +11,11 @@ pub fn free(self: TackyIR) void {
     self.arena.deinit();
 }
 
-pub fn format(
-    self: @This(),
-    writer: *std.Io.Writer,
-) std.Io.Writer.Error!void {
+pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
     try writer.print("TackyIR{{ main: {f} }}", .{self.main});
 }
 
-pub fn prettyFmt(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+pub fn prettyFmt(self: @This(), writer: *std.Io.Writer) Writer.Error!void {
     try writer.print("{f}", .{PrettyPrint.pretty(self)});
 }
 
@@ -25,10 +23,7 @@ pub const Function = struct {
     identifier: []const u8,
     instructions: []const Instruction,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         try writer.print("FunctionTackyIR{{ identifier: {s}, instructions: {{ ", .{self.identifier});
         for (self.instructions, 1..) |instr, i| {
             try writer.print("{f}", .{instr});
@@ -80,10 +75,7 @@ pub const Instruction = union(InstructionKind) {
             }
         };
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("UnaryInstr{{ operator: {}, src: {f}, dst: {f} }}", .{
                 self.operator,
                 self.src,
@@ -138,10 +130,7 @@ pub const Instruction = union(InstructionKind) {
             }
         };
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("BinaryInstr{{ operator: {}, src1: {f}, src2: {f}, dst: {f} }}", .{
                 self.operator,
                 self.src1,
@@ -155,10 +144,7 @@ pub const Instruction = union(InstructionKind) {
         src: Value,
         dst: Value,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("CopyInstr{{ src: {f}, dst: {f} }}", .{
                 self.src,
                 self.dst,
@@ -170,10 +156,7 @@ pub const Instruction = union(InstructionKind) {
         condition: Value,
         target: []const u8,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("JumpIfZeroInstr{{ condition: {f}, target: {s} }}", .{
                 self.condition,
                 self.target,
@@ -185,10 +168,7 @@ pub const Instruction = union(InstructionKind) {
         condition: Value,
         target: []const u8,
 
-        pub fn format(
-            self: @This(),
-            writer: *std.Io.Writer,
-        ) std.Io.Writer.Error!void {
+        pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
             try writer.print("JumpIfNotZeroInstr{{ condition: {f}, target: {s} }}", .{
                 self.condition,
                 self.target,
@@ -196,10 +176,7 @@ pub const Instruction = union(InstructionKind) {
         }
     };
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .ret => |val| try writer.print("RetInstr{{ {f} }}", .{val}),
             .jump => |target| try writer.print("JumpInstr{{ {s} }}", .{target}),
@@ -218,10 +195,7 @@ pub const Value = union(ValueKind) {
     constant: u128,
     variable: []const u8,
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .constant => |int| try writer.print("ConstantVal{{ {} }}", .{int}),
             .variable => |v| try writer.print("VarVal{{ {s} }}", .{v}),
@@ -230,7 +204,6 @@ pub const Value = union(ValueKind) {
 };
 
 pub const PrettyPrint = struct {
-    const Writer = std.Io.Writer;
     const Error = Writer.Error;
     const Alt = std.fmt.Alt;
 

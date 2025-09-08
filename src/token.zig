@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 
 const Location = @import("Location.zig");
 
@@ -134,10 +135,7 @@ pub const Token = union(TokenKind) {
         return std.meta.activeTag(self);
     }
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         switch (self) {
             .identifier => |string| try writer.print("identifier(\"{s}\")", .{string}),
             .int_lit => |value| try writer.print("int_lit({})", .{value}),

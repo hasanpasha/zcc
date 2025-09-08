@@ -1,4 +1,5 @@
 const std = @import("std");
+const Writer = std.Io.Writer;
 
 const LIR = @import("LIR.zig");
 
@@ -23,8 +24,8 @@ pub const ErrorVariant = union(enum) {
 
 //     pub fn format(
 //         self: @This(),
-//         writer: *std.Io.Writer,
-//     ) std.Io.Writer.Error!void {
+//         writer: *Writer
+//     ) Writer.Error!void {
 //         try writer.print("{f}", .{
 //             self.err,
 //                 // std.fmt.alt(self.loc, .readableFmt),
@@ -35,10 +36,7 @@ pub const ErrorVariant = union(enum) {
 pub const Error = struct {
     errs: std.array_list.Managed(ErrorVariant),
 
-    pub fn format(
-        self: @This(),
-        writer: *std.Io.Writer,
-    ) std.Io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
         for (self.errs.items, 1..) |err, i| {
             try writer.print("{}: {s}\n", .{ i, @tagName(err) });
         }
