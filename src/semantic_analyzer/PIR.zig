@@ -85,6 +85,9 @@ pub const Statement = union(StatementKind) {
     @"while": While,
     do_while: DoWhile,
     @"for": For,
+    @"switch": Switch,
+    case: Case,
+    default: Default,
 
     pub const If = struct {
         cond: Expression,
@@ -210,6 +213,65 @@ pub const Statement = union(StatementKind) {
                 self.body,
                 self.label,
             });
+        }
+    };
+
+    pub const Switch = struct {
+        cond: Expression,
+        body: *Statement,
+        label: []const u8,
+        cases: []const Case,
+        default: ?Default,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("SwitchStmt{{ cond: {f}, body: {f}, label: {s}, cases: {{ ", .{
+                self.cond,
+                self.body,
+                self.label,
+            });
+            for (self.cases, 1..) |case, i| {
+                try writer.print("{f}", .{case});
+                if (i < self.cases.len) {
+                    try writer.writeAll(", ");
+                }
+            }
+            try writer.writeAll(" }, default: ");
+            if (self.default) |default| {
+                try writer.print("{f} }}", .{default});
+            } else {
+                try writer.writeAll("null }");
+            }
+        }
+    };
+
+    pub const Case = struct {
+        expr: Expression,
+        stmt: ?*Statement,
+        label: []const u8,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("CaseStmt{{ expr: {f}, stmt: ", .{self.expr});
+            if (self.stmt) |stmt| {
+                try writer.print("{f}", .{stmt});
+            } else {
+                try writer.writeAll("null");
+            }
+            try writer.print(", label: {s} }}", .{self.label});
+        }
+    };
+
+    pub const Default = struct {
+        stmt: ?*Statement = null,
+        label: []const u8,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("DefaultStmt{{ ", .{});
+            if (self.stmt) |stmt| {
+                try writer.print("{f}", .{stmt});
+            } else {
+                try writer.writeAll("null");
+            }
+            try writer.print(", label: {s} }}", .{self.label});
         }
     };
 

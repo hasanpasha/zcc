@@ -219,6 +219,9 @@ fn statement(self: *Parser) ParserResult(Statement) {
         .@"while" => self.whileStmt(),
         .do => self.doWhileStmt(),
         .@"for" => self.forStmt(),
+        .@"switch" => self.switchStmt(),
+        .case => self.caseStmt(),
+        .default => self.defaultStmt(),
         else => self.expressionStmt(),
     };
 }
@@ -424,6 +427,56 @@ fn forStmt(self: *Parser) ParserResult(Statement) {
         .post = post,
         .body = body,
     } });
+}
+
+fn switchStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.@"switch").maybe_err()) |err| return .Err(err);
+
+    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+    const cond = switch (self.expression()) {
+        .ok => |val| val.*,
+        .err => |err| return .Err(err),
+    };
+    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+
+    const body = switch (self.statement()) {
+        .ok => |val| self.onHeap(val),
+        .err => |err| return .Err(err),
+    };
+
+    return .Ok(.{ .@"switch" = .{ .cond = cond, .body = body } });
+}
+
+fn caseStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.case).maybe_err()) |err| return .Err(err);
+    const expr = switch (self.intLitExpr()) {
+        .ok => |val| val,
+        .err => |err| return .Err(err),
+    };
+    if (self.consume(.colon).maybe_err()) |err| return .Err(err);
+    const stmt = if (self.curKind()) |kind| if (kind != .rcub and kind != .case and kind != .default)
+        switch (self.statement()) {
+            .ok => |stmt| self.onHeap(stmt),
+            .err => |err| return .Err(err),
+        }
+    else
+        null else return .Err(self.tokensUnexpectedEnd());
+
+    return .Ok(.{ .case = .{ .expr = expr, .stmt = stmt } });
+}
+
+fn defaultStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.default).maybe_err()) |err| return .Err(err);
+    if (self.consume(.colon).maybe_err()) |err| return .Err(err);
+    const stmt = if (self.curKind()) |kind| if (kind != .rcub and kind != .case and kind != .default)
+        switch (self.statement()) {
+            .ok => |stmt| self.onHeap(stmt),
+            .err => |err| return .Err(err),
+        }
+    else
+        null else return .Err(self.tokensUnexpectedEnd());
+
+    return .Ok(.{ .default = .{ .stmt = stmt } });
 }
 
 fn tokensUnexpectedEnd(self: *Parser) Error {

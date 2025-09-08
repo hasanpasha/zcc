@@ -85,6 +85,9 @@ pub const Statement = union(StatementKind) {
     @"while": While,
     do_while: DoWhile,
     @"for": For,
+    @"switch": Switch,
+    case: Case,
+    default: Default,
 
     pub const If = struct {
         cond: Expression,
@@ -202,6 +205,42 @@ pub const Statement = union(StatementKind) {
                 try writer.writeAll("null");
             }
             try writer.print(", body: {f}, label: {s} }}", .{self.body});
+        }
+    };
+
+    pub const Switch = struct {
+        cond: Expression,
+        body: *Statement,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("SwitchStmt{{ cond: {f}, body: {f} }}", .{ self.cond, self.body });
+        }
+    };
+
+    pub const Case = struct {
+        expr: Expression,
+        stmt: ?*Statement,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("CaseStmt{{ expr: {f}, stmt: ", .{self.expr});
+            if (self.stmt) |stmt| {
+                try writer.print("{f} }}", .{stmt});
+            } else {
+                try writer.writeAll("null }");
+            }
+        }
+    };
+
+    pub const Default = struct {
+        stmt: ?*Statement = null,
+
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("DefaultStmt{{ stmt: ", .{self.expr});
+            if (self.stmt) |stmt| {
+                try writer.print("{f} }}", .{stmt});
+            } else {
+                try writer.writeAll("null }");
+            }
         }
     };
 

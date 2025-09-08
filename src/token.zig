@@ -52,6 +52,9 @@ pub const TokenKind = enum {
     minus_minus,
     colon,
     quest,
+    @"switch",
+    case,
+    default,
 
     // keywords
     int,
@@ -111,6 +114,9 @@ pub const Token = union(TokenKind) {
     minus_minus,
     colon,
     quest,
+    @"switch",
+    case,
+    default,
 
     int,
     void,

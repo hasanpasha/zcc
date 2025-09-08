@@ -4,14 +4,14 @@ const LIR = @import("LIR.zig");
 const PIR = @import("PIR.zig");
 const Result = @import("../result.zig").Result;
 
-const VariableResolution = @import("VariableResolution.zig");
-const LabelResolution = @import("LabelResolution.zig");
-const LoopLabel = @import("LoopLabel.zig");
+const VariableResolution = @import("VariableResolver.zig");
+const LabelResolution = @import("LabelResolver.zig");
+const StmtLabel = @import("StmtLabel.zig");
 
 pub const Error = union(enum) {
     variable_resolution: VariableResolution.Error,
     label_resoluion: LabelResolution.Error,
-    loop_label: LoopLabel.Error,
+    loop_label: StmtLabel.Error,
 
     pub fn format(
         self: @This(),
@@ -34,7 +34,7 @@ pub fn analyze(in: AST, allocator: std.mem.Allocator) Result(PIR, Error) {
         .err => |err| return .Err(.{ .label_resoluion = err }),
     };
 
-    const loops_labeled = switch (LoopLabel.label(labels_resolved, allocator)) {
+    const loops_labeled = switch (StmtLabel.label(labels_resolved, allocator)) {
         .ok => |val| val,
         .err => |err| return .Err(.{ .loop_label = err }),
     };

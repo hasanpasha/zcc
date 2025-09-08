@@ -195,6 +195,9 @@ const keywordsMap = std.StaticStringMap(Token).initComptime(.{
     .{ "for", .@"for" },
     .{ "break", .@"break" },
     .{ "continue", .@"continue" },
+    .{ "switch", .@"switch" },
+    .{ "case", .case },
+    .{ "default", .default },
 });
 
 fn lexIdentifier(self: *Lexer) LexerResult(Token) {
@@ -266,7 +269,7 @@ fn match(self: *Lexer, ch: u8) bool {
 }
 
 test Lexer {
-    const kinds = [_]Token{
+    const expected_toks = [_]Token{
         .{ .identifier = "main" }, .{ .int_lit = 43 },
         .lparen,        .rparen,     .lcub,          .rcub,          .semicolon,       .tilde,        .minus,          .plus, //
         .asterisk,      .slash,      .percent,       .amp,           .verbar,          .hat,          .lt_lt,          .gt_gt,
@@ -274,28 +277,29 @@ test Lexer {
         .gt_equals,     .equals,     .plus_equals,   .minus_equals,  .asterisk_equals, .slash_equals, .percent_equals, .amp_equals,
         .verbar_equals, .hat_equals, .lt_lt_equals,  .gt_gt_equals,  .plus_plus,       .minus_minus,  .colon,          .quest,
         .int,           .void,       .@"return",     .@"if",         .@"else",         .goto,         .do,             .@"while",
-        .@"for",        .@"break",   .@"continue",
+        .@"for",        .@"break",   .@"continue",   .@"switch",     .case,            .default,
     };
 
     const code =
         \\main 43
         \\(){};~-+*/%&|^<<>>!&&||==!=<><=>==+=-=*=/=%=&=|=^=<<=>>=++--:? 
-        \\int void return if else goto do while for break continue
+        \\int void return if else goto do while for break continue switch case default
     ;
 
     var lexer = init(code);
 
     var i: usize = 0;
     while (try lexer.next().toErrorUnion(error.lexer_error)) |ltoken| : (i += 1) {
-        const tok, _ = ltoken;
-        try std.testing.expect(i < kinds.len);
+        const this_tok, _ = ltoken;
+        try std.testing.expect(i < expected_toks.len);
 
-        const expected_tok = kinds[i];
-        try std.testing.expectEqual(expected_tok.kind(), tok.kind());
-        switch (tok) {
+        const expected_tok = expected_toks[i];
+        try std.testing.expectEqual(expected_tok.kind(), this_tok.kind());
+        switch (this_tok) {
             .identifier => |iden| try std.testing.expectEqualStrings(expected_tok.identifier, iden),
             .int_lit => |val| try std.testing.expectEqual(expected_tok.int_lit, val),
-            else => try std.testing.expectEqual(kinds[i], tok),
+            else => try std.testing.expectEqual(expected_toks[i], this_tok),
         }
     }
+    try std.testing.expect(i == expected_toks.len);
 }

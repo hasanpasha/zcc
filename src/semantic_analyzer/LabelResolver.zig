@@ -9,7 +9,7 @@ labels: std.StringHashMap([]const u8),
 errs: std.array_list.Managed(ErrorItem),
 counter: usize = 0,
 
-const LabelResolution = @This();
+const LabelResolver = @This();
 
 const ErrorVariant = union(enum) {
     duplicate: []const u8,
@@ -57,7 +57,7 @@ pub const Error = struct {
 pub fn resolve(in: VIR, allocator: std.mem.Allocator) Result(LIR, Error) {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
-    var self: LabelResolution = .{
+    var self: LabelResolver = .{
         .allocator = arena.allocator(),
         .labels = .init(allocator),
         .errs = .init(allocator),
@@ -74,14 +74,14 @@ pub fn resolve(in: VIR, allocator: std.mem.Allocator) Result(LIR, Error) {
     return .Ok(.{ .main_function = main_func, .arena = arena });
 }
 
-fn gather(self: *LabelResolution, blk: VIR.Block) void {
+fn gather(self: *LabelResolver, blk: VIR.Block) void {
     for (blk.items) |item| {
         if (item == .declaration) continue;
         self.gatherInStmt(item.statement);
     }
 }
 
-fn gatherInStmt(self: *LabelResolution, stmt: VIR.Statement) void {
+fn gatherInStmt(self: *LabelResolver, stmt: VIR.Statement) void {
     switch (stmt) {
         .@"return", .expr, .goto, .null, .@"break", .@"continue" => {},
         .@"if" => |_if| {
@@ -106,31 +106,34 @@ fn gatherInStmt(self: *LabelResolution, stmt: VIR.Statement) void {
         .@"for" => |_for| self.gatherInStmt(_for.body.*),
         .@"while" => |_while| self.gatherInStmt(_while.body.*),
         .do_while => |do_while| self.gatherInStmt(do_while.body.*),
+        .@"switch" => |_switch| self.gatherInStmt(_switch.body.*),
+        .case => |case| if (case.stmt) |_stmt| self.gatherInStmt(_stmt.*),
+        .default => |default| if (default.stmt) |_stmt| self.gatherInStmt(_stmt.*),
     }
 }
 
-fn function(self: *LabelResolution, func: VIR.Function) LIR.Function {
+fn function(self: *LabelResolver, func: VIR.Function) LIR.Function {
     return .{
         .name = func.name,
         .body = self.block(func.body),
     };
 }
 
-fn block(self: *LabelResolution, blk: VIR.Block) LIR.Block {
+fn block(self: *LabelResolver, blk: VIR.Block) LIR.Block {
     var items = self.allocator.alloc(LIR.BlockItem, blk.items.len) catch @panic("OOM");
     for (blk.items, 0..) |item, i|
         items[i] = self.blockItem(item);
     return .{ .items = items };
 }
 
-fn blockItem(self: *LabelResolution, item: VIR.BlockItem) LIR.BlockItem {
+fn blockItem(self: *LabelResolver, item: VIR.BlockItem) LIR.BlockItem {
     return switch (item) {
         .declaration => |decl| .{ .declaration = decl },
         .statement => |stmt| .{ .statement = self.statement(stmt) },
     };
 }
 
-fn statement(self: *LabelResolution, stmt: VIR.Statement) LIR.Statement {
+fn statement(self: *LabelResolver, stmt: VIR.Statement) LIR.Statement {
     return switch (stmt) {
         .null => .null,
         .@"return" => |expr| .{ .@"return" = expr },
@@ -175,16 +178,27 @@ fn statement(self: *LabelResolution, stmt: VIR.Statement) LIR.Statement {
             .post = _for.post,
             .body = self.onHeap(self.statement(_for.body.*)),
         } },
+        .@"switch" => |_switch| .{ .@"switch" = .{
+            .cond = _switch.cond,
+            .body = self.onHeap(self.statement(_switch.body.*)),
+        } },
+        .case => |case| .{ .case = .{
+            .expr = case.expr,
+            .stmt = if (case.stmt) |_stmt| self.onHeap(self.statement(_stmt.*)) else null,
+        } },
+        .default => |default| .{ .default = .{
+            .stmt = if (default.stmt) |_stmt| self.onHeap(self.statement(_stmt.*)) else null,
+        } },
     };
 }
 
 const onHeap = @import("../utils.zig").onHeap;
 
-fn fail(self: *LabelResolution, err: ErrorItem) void {
+fn fail(self: *LabelResolver, err: ErrorItem) void {
     self.errs.append(err) catch @panic("OOM");
 }
 
-fn makeUniqueLabel(self: *LabelResolution, suffix: []const u8) []u8 {
+fn makeUniqueLabel(self: *LabelResolver, suffix: []const u8) []u8 {
     defer self.counter += 1;
     return std.fmt.allocPrint(self.allocator, ".{s}.{}", .{
         suffix,

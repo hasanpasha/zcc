@@ -1,1 +1,1 @@
-zig build book-test -- --chapter 7 --verbose --extra-credit # should be updated on each chapter
+zig build book-test -- --chapter 8 --extra-credit --verbose # should be updated on each chapter

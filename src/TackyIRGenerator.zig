@@ -146,11 +146,50 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
             }
             self.stmtInstruction(_for.body.*);
             self.addInstr(.{ .label = continue_label });
-            _ = if (_for.post) |post| self.value(post);
+            if (_for.post) |post|
+                _ = self.value(post);
             self.addInstrs(&.{
                 .{ .jump = start_label },
                 .{ .label = break_label },
             });
+        },
+        .@"switch" => |_switch| {
+            const break_label = self.breakLabel(_switch.label);
+
+            const expr = self.value(_switch.cond);
+            for (_switch.cases) |case| {
+                const constant = self.value(case.expr);
+                const cond = self.makeTempVar();
+                self.addInstrs(&.{
+                    .{ .binary = .{
+                        .operator = .equal,
+                        .src1 = expr,
+                        .src2 = constant,
+                        .dst = cond,
+                    } },
+                    .{ .jump_if_not_zero = .{
+                        .condition = cond,
+                        .target = case.label,
+                    } },
+                });
+            }
+
+            if (_switch.default) |default| {
+                self.addInstr(.{ .jump = default.label });
+            } else {
+                self.addInstr(.{ .jump = break_label });
+            }
+
+            self.stmtInstruction(_switch.body.*);
+            self.addInstr(.{ .label = break_label });
+        },
+        .case => |case| {
+            self.addInstr(.{ .label = case.label });
+            if (case.stmt) |_stmt| self.stmtInstruction(_stmt.*);
+        },
+        .default => |default| {
+            self.addInstr(.{ .label = default.label });
+            if (default.stmt) |_stmt| self.stmtInstruction(_stmt.*);
         },
     }
 }

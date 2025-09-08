@@ -45,7 +45,7 @@ variables: *Environment,
 errs: std.array_list.Managed(ErrorItem),
 counter: usize = 0,
 
-const VariableResolution = @This();
+const VariableResolver = @This();
 
 const ErrorVariant = union(enum) {
     duplicate: []const u8,
@@ -96,7 +96,7 @@ pub fn resolve(in: AST, allocator: std.mem.Allocator) Result(VIR, Error) {
     var arena = std.heap.ArenaAllocator.init(allocator);
     var temp_arena = std.heap.ArenaAllocator.init(allocator);
 
-    var self: VariableResolution = .{
+    var self: VariableResolver = .{
         .allocator = arena.allocator(),
         .temp_alloc = temp_arena.allocator(),
         .variables = .init(temp_arena.allocator(), null),
@@ -113,14 +113,14 @@ pub fn resolve(in: AST, allocator: std.mem.Allocator) Result(VIR, Error) {
     return .Ok(.{ .main_function = main_func, .arena = arena });
 }
 
-fn function(self: *VariableResolution, func: AST.Function) VIR.Function {
+fn function(self: *VariableResolver, func: AST.Function) VIR.Function {
     return .{
         .name = func.name.name,
         .body = self.block(func.body),
     };
 }
 
-fn block(self: *VariableResolution, blk: AST.Block) VIR.Block {
+fn block(self: *VariableResolver, blk: AST.Block) VIR.Block {
     self.pushEnv(null);
     defer self.popEnv();
 
@@ -130,14 +130,14 @@ fn block(self: *VariableResolution, blk: AST.Block) VIR.Block {
     return .{ .items = items };
 }
 
-fn blockItem(self: *VariableResolution, item: AST.BlockItem) VIR.BlockItem {
+fn blockItem(self: *VariableResolver, item: AST.BlockItem) VIR.BlockItem {
     return switch (item) {
         .declaration => |decl| .{ .declaration = self.declaration(decl) },
         .statement => |stmt| .{ .statement = self.statement(stmt) },
     };
 }
 
-fn declaration(self: *VariableResolution, decl: AST.Declaration) VIR.Declaration {
+fn declaration(self: *VariableResolver, decl: AST.Declaration) VIR.Declaration {
     return switch (decl) {
         .variable => |variable| _var: {
             const name = variable.name.name;
@@ -164,7 +164,7 @@ fn declaration(self: *VariableResolution, decl: AST.Declaration) VIR.Declaration
     };
 }
 
-fn statement(self: *VariableResolution, stmt: AST.Statement) VIR.Statement {
+fn statement(self: *VariableResolver, stmt: AST.Statement) VIR.Statement {
     return switch (stmt) {
         .null => .null,
         .@"return" => |expr| .{ .@"return" = self.expression(expr) },
@@ -205,10 +205,21 @@ fn statement(self: *VariableResolution, stmt: AST.Statement) VIR.Statement {
                 .body = self.onHeap(self.statement(_for.body.*)),
             } };
         },
+        .@"switch" => |_switch| .{ .@"switch" = .{
+            .cond = self.expression(_switch.cond),
+            .body = self.onHeap(self.statement(_switch.body.*)),
+        } },
+        .case => |case| .{ .case = .{
+            .expr = self.expression(case.expr),
+            .stmt = if (case.stmt) |_stmt| self.onHeap(self.statement(_stmt.*)) else null,
+        } },
+        .default => |default| .{ .default = .{
+            .stmt = if (default.stmt) |_stmt| self.onHeap(self.statement(_stmt.*)) else null,
+        } },
     };
 }
 
-fn expression(self: *VariableResolution, expr: AST.Expression) VIR.Expression {
+fn expression(self: *VariableResolver, expr: AST.Expression) VIR.Expression {
     return switch (expr) {
         .int_lit => |lit| .{ .int_lit = lit.value },
         .binary => |binary| .{ .binary = .{
@@ -275,11 +286,11 @@ fn expression(self: *VariableResolution, expr: AST.Expression) VIR.Expression {
 
 const onHeap = @import("../utils.zig").onHeap;
 
-fn fail(self: *VariableResolution, err: ErrorItem) void {
+fn fail(self: *VariableResolver, err: ErrorItem) void {
     self.errs.append(err) catch @panic("OOM");
 }
 
-fn makeUniqueName(self: *VariableResolution, suffix: []const u8) []u8 {
+fn makeUniqueName(self: *VariableResolver, suffix: []const u8) []u8 {
     defer self.counter += 1;
     return std.fmt.allocPrint(self.allocator, "var.{s}.{}", .{
         suffix,
@@ -299,11 +310,11 @@ fn locateExpr(expr: AST.Expression) Location {
     };
 }
 
-pub fn pushEnv(self: *VariableResolution, env: ?*Environment) void {
+pub fn pushEnv(self: *VariableResolver, env: ?*Environment) void {
     self.variables = if (env) |e| e else .init(self.allocator, self.variables);
 }
 
-pub fn popEnv(self: *VariableResolution) void {
+pub fn popEnv(self: *VariableResolver) void {
     if (self.variables.parent) |parent|
         self.variables = parent;
 }
