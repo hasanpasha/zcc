@@ -113,6 +113,11 @@ pub const Statement = union(StatementKind) {
     goto: Identifier,
     labeled_stmt: LabeledStmt,
     compound: Block,
+    @"break",
+    @"continue",
+    @"while": While,
+    do_while: DoWhile,
+    @"for": For,
 
     pub const If = struct {
         cond: Expression,
@@ -150,6 +155,89 @@ pub const Statement = union(StatementKind) {
         }
     };
 
+    pub const While = struct {
+        cond: Expression,
+        body: *Statement,
+
+        pub fn format(
+            self: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            try writer.print("WhileStmt{{ cond: {f}, body: {f} }}", .{
+                self.cond,
+                self.body.*,
+            });
+        }
+    };
+
+    pub const DoWhile = struct {
+        body: *Statement,
+        cond: Expression,
+
+        pub fn format(
+            self: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            try writer.print("DoWhile{{ body: {f}, cond: {f} }}", .{
+                self.body.*,
+                self.cond,
+            });
+        }
+    };
+
+    pub const For = struct {
+        init: ForInit,
+        cond: ?Expression,
+        post: ?Expression,
+        body: *Statement,
+
+        pub const ForInitKind = enum {
+            decl,
+            expr,
+        };
+
+        pub const ForInit = union(ForInitKind) {
+            decl: *Declaration,
+            expr: ?Expression,
+
+            pub fn format(
+                self: @This(),
+                writer: *std.Io.Writer,
+            ) std.Io.Writer.Error!void {
+                switch (self) {
+                    .decl => |decl| try writer.print("DeclForInit{{ {f} }}", .{decl.*}),
+                    .expr => |expr| {
+                        try writer.writeAll("ExprForInit{ ");
+                        if (expr) |exp| {
+                            try writer.print("{f} }}", .{exp});
+                        } else {
+                            try writer.writeAll("null }");
+                        }
+                    },
+                }
+            }
+        };
+
+        pub fn format(
+            self: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            try writer.print("ForStmt{{ init: {f}, cond: ", .{self.init});
+            if (self.cond) |cond| {
+                try writer.print("{f}", .{cond});
+            } else {
+                try writer.writeAll("null");
+            }
+            try writer.writeAll(", post: ");
+            if (self.post) |post| {
+                try writer.print("{f}", .{post});
+            } else {
+                try writer.writeAll("null");
+            }
+            try writer.print(", body: {f} }}", .{self.body});
+        }
+    };
+
     pub fn format(
         self: @This(),
         writer: *std.Io.Writer,
@@ -160,6 +248,8 @@ pub const Statement = union(StatementKind) {
             .null => try writer.print("NullStmt", .{}),
             .goto => |target| try writer.print("GotoStmt{{ {f} }}", .{target}),
             .compound => |block| try writer.print("CompoundStmt{{ {f} }}", .{block}),
+            .@"break" => try writer.writeAll("breakStmt"),
+            .@"continue" => try writer.writeAll("continueStmt"),
             inline else => |s| try writer.print("{f}", .{s}),
         }
     }

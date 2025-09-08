@@ -1,6 +1,6 @@
 const std = @import("std");
-const VIR = @import("VIR.zig");
 const AST = @import("../AST.zig");
+const VIR = @import("VIR.zig");
 const Result = @import("../result.zig").Result;
 const Location = @import("../Location.zig");
 const oneOf = @import("../utils.zig").oneOf;
@@ -40,6 +40,7 @@ pub const Environment = struct {
 };
 
 allocator: std.mem.Allocator,
+temp_alloc: std.mem.Allocator,
 variables: *Environment,
 errs: std.array_list.Managed(ErrorItem),
 counter: usize = 0,
@@ -93,13 +94,15 @@ pub const Error = struct {
 
 pub fn resolve(in: AST, allocator: std.mem.Allocator) Result(VIR, Error) {
     var arena = std.heap.ArenaAllocator.init(allocator);
+    var temp_arena = std.heap.ArenaAllocator.init(allocator);
 
     var self: VariableResolution = .{
         .allocator = arena.allocator(),
-        .variables = .init(allocator, null),
+        .temp_alloc = temp_arena.allocator(),
+        .variables = .init(temp_arena.allocator(), null),
         .errs = .init(allocator),
     };
-    defer self.variables.deinit();
+    defer temp_arena.deinit();
 
     const main_func = self.function(in.main_function);
 
@@ -118,13 +121,8 @@ fn function(self: *VariableResolution, func: AST.Function) VIR.Function {
 }
 
 fn block(self: *VariableResolution, blk: AST.Block) VIR.Block {
-    self.variables = .init(self.allocator, self.variables);
-    defer {
-        const parent = self.variables.parent;
-        self.variables.deinit();
-        if (parent) |p|
-            self.variables = p;
-    }
+    self.pushEnv(null);
+    defer self.popEnv();
 
     var items = self.allocator.alloc(VIR.BlockItem, blk.items.len) catch @panic("OOM");
     for (blk.items, 0..) |item, i|
@@ -183,8 +181,29 @@ fn statement(self: *VariableResolution, stmt: AST.Statement) VIR.Statement {
             .label = ls.label,
             .stmt = self.onHeap(self.statement(ls.stmt.*)),
         } },
-        .compound => |blk| .{
-            .compound = self.block(blk),
+        .compound => |blk| .{ .compound = self.block(blk) },
+        .@"break" => .@"break",
+        .@"continue" => .@"continue",
+        .@"while" => |_while| .{ .@"while" = .{
+            .cond = self.expression(_while.cond),
+            .body = self.onHeap(self.statement(_while.body.*)),
+        } },
+        .do_while => |do_while| .{ .do_while = .{
+            .body = self.onHeap(self.statement(do_while.body.*)),
+            .cond = self.expression(do_while.cond),
+        } },
+        .@"for" => |_for| stmt: {
+            self.pushEnv(null);
+            defer self.popEnv();
+            break :stmt .{ .@"for" = .{
+                .init = switch (_for.init) {
+                    .decl => |decl| .{ .decl = self.onHeap(self.declaration(decl.*)) },
+                    .expr => |expr| .{ .expr = if (expr) |exp| self.expression(exp) else null },
+                },
+                .cond = if (_for.cond) |cond| self.expression(cond) else null,
+                .post = if (_for.post) |post| self.expression(post) else null,
+                .body = self.onHeap(self.statement(_for.body.*)),
+            } };
         },
     };
 }
@@ -278,4 +297,13 @@ fn locateExpr(expr: AST.Expression) Location {
         .variable => |va| va.location,
         .conditional => |cond| locateExpr(cond.cond.*),
     };
+}
+
+pub fn pushEnv(self: *VariableResolution, env: ?*Environment) void {
+    self.variables = if (env) |e| e else .init(self.allocator, self.variables);
+}
+
+pub fn popEnv(self: *VariableResolution) void {
+    if (self.variables.parent) |parent|
+        self.variables = parent;
 }

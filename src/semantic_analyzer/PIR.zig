@@ -1,19 +1,19 @@
 const std = @import("std");
 
-const VIR = @import("VIR.zig");
-pub const BlockItemKind = VIR.BlockItemKind;
-pub const StatementKind = VIR.StatementKind;
-pub const DeclarationKind = VIR.DeclarationKind;
-pub const Declaration = VIR.Declaration;
-pub const Expression = VIR.Expression;
+const LIR = @import("LIR.zig");
+pub const BlockItemKind = LIR.BlockItemKind;
+pub const StatementKind = LIR.StatementKind;
+pub const DeclarationKind = LIR.DeclarationKind;
+pub const Declaration = LIR.Declaration;
+pub const Expression = LIR.Expression;
 
-pub const LIR = @This();
+pub const PIR = @This();
 
 main_function: Function,
 
 arena: std.heap.ArenaAllocator,
 
-pub fn free(self: LIR) void {
+pub fn free(self: PIR) void {
     self.arena.deinit();
 }
 
@@ -21,7 +21,7 @@ pub fn format(
     self: @This(),
     writer: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
-    try writer.print("ProgramLIR{{ main_function: {f} }}", .{self.main_function});
+    try writer.print("PIR{{ main_function: {f} }}", .{self.main_function});
 }
 
 pub const Block = struct {
@@ -50,7 +50,7 @@ pub const Function = struct {
         self: @This(),
         writer: *std.Io.Writer,
     ) std.Io.Writer.Error!void {
-        try writer.print("FunctionLIR{{ name: {s}, body: {{ {f} }}", .{
+        try writer.print("Function{{ name: {s}, body: {{ {f} }}", .{
             self.name,
             self.body,
         });
@@ -80,8 +80,8 @@ pub const Statement = union(StatementKind) {
     goto: []const u8,
     labeled_stmt: LabeledStmt,
     compound: Block,
-    @"break",
-    @"continue",
+    @"break": []const u8,
+    @"continue": []const u8,
     @"while": While,
     do_while: DoWhile,
     @"for": For,
@@ -125,14 +125,16 @@ pub const Statement = union(StatementKind) {
     pub const While = struct {
         cond: Expression,
         body: *Statement,
+        label: []const u8,
 
         pub fn format(
             self: @This(),
             writer: *std.Io.Writer,
         ) std.Io.Writer.Error!void {
-            try writer.print("WhileStmt{{ cond: {f}, body: {f} }}", .{
+            try writer.print("WhileStmt{{ cond: {f}, body: {f}, label: {s} }}", .{
                 self.cond,
                 self.body.*,
+                self.label,
             });
         }
     };
@@ -140,14 +142,16 @@ pub const Statement = union(StatementKind) {
     pub const DoWhile = struct {
         body: *Statement,
         cond: Expression,
+        label: []const u8,
 
         pub fn format(
             self: @This(),
             writer: *std.Io.Writer,
         ) std.Io.Writer.Error!void {
-            try writer.print("DoWhile{{ body: {f}, cond: {f} }}", .{
+            try writer.print("DoWhile{{ body: {f}, cond: {f}, label: {s} }}", .{
                 self.body.*,
                 self.cond,
+                self.label,
             });
         }
     };
@@ -157,6 +161,7 @@ pub const Statement = union(StatementKind) {
         cond: ?Expression,
         post: ?Expression,
         body: *Statement,
+        label: []const u8,
 
         pub const ForInitKind = enum {
             decl,
@@ -201,7 +206,10 @@ pub const Statement = union(StatementKind) {
             } else {
                 try writer.writeAll("null");
             }
-            try writer.print(", body: {f}, label: {s} }}", .{self.body});
+            try writer.print(", body: {f}, label: {s} }}", .{
+                self.body,
+                self.label,
+            });
         }
     };
 
@@ -214,8 +222,8 @@ pub const Statement = union(StatementKind) {
             .expr => |expr| try writer.print("ExprStmt{{ {f} }}", .{expr}),
             .null => try writer.print("NullStmt", .{}),
             .goto => |target| try writer.print("GotoStmt{{ {s} }}", .{target}),
-            .@"break" => try writer.writeAll("breakStmt"),
-            .@"continue" => try writer.writeAll("continueStmt"),
+            .@"break" => |label| try writer.print("breakStmt{{ {s} }}", .{label}),
+            .@"continue" => |label| try writer.print("continueStmt{{ {s} }}", .{label}),
             inline else => |s| try writer.print("{f}", .{s}),
         }
     }

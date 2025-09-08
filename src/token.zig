@@ -60,6 +60,11 @@ pub const TokenKind = enum {
     @"if",
     @"else",
     goto,
+    do,
+    @"while",
+    @"for",
+    @"break",
+    @"continue",
 };
 
 pub const Token = union(TokenKind) {
@@ -113,6 +118,11 @@ pub const Token = union(TokenKind) {
     @"if",
     @"else",
     goto,
+    do,
+    @"while",
+    @"for",
+    @"break",
+    @"continue",
 
     pub fn kind(self: Token) TokenKind {
         return std.meta.activeTag(self);

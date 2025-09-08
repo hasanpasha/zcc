@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const LIR = @import("semantic_analyzer/LIR.zig");
+const PIR = @import("semantic_analyzer/PIR.zig");
 
 const TackyIR = @import("TackyIR.zig");
 const Function = TackyIR.Function;
@@ -16,7 +16,7 @@ label_counter: usize = 0,
 
 const TackyIRGenerator = @This();
 
-pub fn lower(ast: LIR, allocator: std.mem.Allocator) TackyIR {
+pub fn lower(ast: PIR, allocator: std.mem.Allocator) TackyIR {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self = TackyIRGenerator{
@@ -29,7 +29,7 @@ pub fn lower(ast: LIR, allocator: std.mem.Allocator) TackyIR {
     return .{ .main = func, .arena = arena };
 }
 
-fn function(self: *TackyIRGenerator, ast_func: LIR.Function) Function {
+fn function(self: *TackyIRGenerator, ast_func: PIR.Function) Function {
     const previous_instrs = self.instrs;
 
     self.instrs = .init(self.allocator);
@@ -46,14 +46,14 @@ fn function(self: *TackyIRGenerator, ast_func: LIR.Function) Function {
     return .{ .identifier = ast_func.name, .instructions = instrs };
 }
 
-fn instruction(self: *TackyIRGenerator, item: LIR.BlockItem) void {
+fn instruction(self: *TackyIRGenerator, item: PIR.BlockItem) void {
     switch (item) {
         .declaration => |decl| self.declInstruction(decl),
         .statement => |stmt| self.stmtInstruction(stmt),
     }
 }
 
-fn declInstruction(self: *TackyIRGenerator, decl: LIR.Declaration) void {
+fn declInstruction(self: *TackyIRGenerator, decl: PIR.Declaration) void {
     switch (decl) {
         .variable => |variable| {
             if (variable.init) |init| {
@@ -65,7 +65,7 @@ fn declInstruction(self: *TackyIRGenerator, decl: LIR.Declaration) void {
     }
 }
 
-fn stmtInstruction(self: *TackyIRGenerator, stmt: LIR.Statement) void {
+fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
     switch (stmt) {
         .@"return" => |expr| {
             const val = self.value(expr);
@@ -99,10 +99,63 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: LIR.Statement) void {
         },
         .compound => |compound| for (compound.items) |item|
             self.instruction(item),
+        .@"break" => |lbl| self.addInstr(.{ .jump = self.breakLabel(lbl) }),
+        .@"continue" => |lbl| self.addInstr(.{ .jump = self.continueLabel(lbl) }),
+        .@"while" => |_while| {
+            const break_label = self.breakLabel(_while.label);
+            const continue_label = self.continueLabel(_while.label);
+
+            self.addInstr(.{ .label = continue_label });
+            const cond = self.value(_while.cond);
+            self.addInstr(.{ .jump_if_zero = .{ .condition = cond, .target = break_label } });
+            self.stmtInstruction(_while.body.*);
+            self.addInstrs(&.{
+                .{ .jump = continue_label },
+                .{ .label = break_label },
+            });
+        },
+        .do_while => |do_while| {
+            const start_label = self.makeLabel(do_while.label);
+            const break_label = self.breakLabel(do_while.label);
+            const continue_label = self.continueLabel(do_while.label);
+
+            self.addInstr(.{ .label = start_label });
+            self.stmtInstruction(do_while.body.*);
+            self.addInstr(.{ .label = continue_label });
+            const cond = self.value(do_while.cond);
+            self.addInstrs(&.{
+                .{ .jump_if_not_zero = .{ .condition = cond, .target = start_label } },
+                .{ .label = break_label },
+            });
+        },
+        .@"for" => |_for| {
+            const start_label = self.makeLabel(_for.label);
+            const break_label = self.breakLabel(_for.label);
+            const continue_label = self.continueLabel(_for.label);
+
+            switch (_for.init) {
+                .decl => |decl| self.declInstruction(decl.*),
+                .expr => |expr| if (expr) |exp| {
+                    _ = self.value(exp);
+                },
+            }
+            self.addInstr(.{ .label = start_label });
+            const cond = if (_for.cond) |cond| self.value(cond) else null;
+            if (cond) |c| {
+                self.addInstr(.{ .jump_if_zero = .{ .condition = c, .target = break_label } });
+            }
+            self.stmtInstruction(_for.body.*);
+            self.addInstr(.{ .label = continue_label });
+            _ = if (_for.post) |post| self.value(post);
+            self.addInstrs(&.{
+                .{ .jump = start_label },
+                .{ .label = break_label },
+            });
+        },
     }
 }
 
-fn value(self: *TackyIRGenerator, expr: LIR.Expression) Value {
+fn value(self: *TackyIRGenerator, expr: PIR.Expression) Value {
     return switch (expr) {
         .int_lit => |int| .{ .constant = int },
         .binary => |binary| result: {
@@ -300,13 +353,25 @@ fn value(self: *TackyIRGenerator, expr: LIR.Expression) Value {
 
 fn makeTempVar(self: *TackyIRGenerator) Value {
     defer self.var_counter += 1;
-    const name = std.fmt.allocPrint(self.allocator, "tmp.{}", .{self.var_counter}) catch @panic("OOM");
+    const name = self.sprint("tmp.{}", .{self.var_counter});
     return .{ .variable = name };
 }
 
 fn makeLabel(self: *TackyIRGenerator, prefix: []const u8) []u8 {
     defer self.label_counter += 1;
-    return std.fmt.allocPrint(self.allocator, ".tir.{s}.{}", .{ prefix, self.label_counter }) catch @panic("OOM");
+    return self.sprint(".tir.{s}.{}", .{ prefix, self.label_counter });
+}
+
+fn breakLabel(self: *TackyIRGenerator, loopLabel: []const u8) []u8 {
+    return self.sprint(".break.{s}", .{loopLabel});
+}
+
+fn continueLabel(self: *TackyIRGenerator, loopLabel: []const u8) []u8 {
+    return self.sprint(".continue.{s}", .{loopLabel});
+}
+
+fn sprint(self: *TackyIRGenerator, comptime fmt: []const u8, args: anytype) []u8 {
+    return std.fmt.allocPrint(self.allocator, fmt, args) catch @panic("OOM");
 }
 
 fn addInstr(self: *TackyIRGenerator, instr: Instruction) void {

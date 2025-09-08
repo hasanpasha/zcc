@@ -83,7 +83,7 @@ fn gather(self: *LabelResolution, blk: VIR.Block) void {
 
 fn gatherInStmt(self: *LabelResolution, stmt: VIR.Statement) void {
     switch (stmt) {
-        .@"return", .expr, .goto, .null => {},
+        .@"return", .expr, .goto, .null, .@"break", .@"continue" => {},
         .@"if" => |_if| {
             self.gatherInStmt(_if.then.*);
             if (_if.or_else) |s| self.gatherInStmt(s.*);
@@ -103,6 +103,9 @@ fn gatherInStmt(self: *LabelResolution, stmt: VIR.Statement) void {
             self.gatherInStmt(ls.stmt.*);
         },
         .compound => |blk| self.gather(blk),
+        .@"for" => |_for| self.gatherInStmt(_for.body.*),
+        .@"while" => |_while| self.gatherInStmt(_while.body.*),
+        .do_while => |do_while| self.gatherInStmt(do_while.body.*),
     }
 }
 
@@ -153,6 +156,25 @@ fn statement(self: *LabelResolution, stmt: VIR.Statement) LIR.Statement {
             .stmt = self.onHeap(self.statement(ls.stmt.*)),
         } },
         .compound => |blk| .{ .compound = self.block(blk) },
+        .@"break" => .@"break",
+        .@"continue" => .@"continue",
+        .@"while" => |_while| .{ .@"while" = .{
+            .cond = _while.cond,
+            .body = self.onHeap(self.statement(_while.body.*)),
+        } },
+        .do_while => |do_while| .{ .do_while = .{
+            .body = self.onHeap(self.statement(do_while.body.*)),
+            .cond = do_while.cond,
+        } },
+        .@"for" => |_for| .{ .@"for" = .{
+            .init = switch (_for.init) {
+                .decl => |decl| .{ .decl = decl },
+                .expr => |expr| .{ .expr = expr },
+            },
+            .cond = _for.cond,
+            .post = _for.post,
+            .body = self.onHeap(self.statement(_for.body.*)),
+        } },
     };
 }
 

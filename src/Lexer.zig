@@ -190,6 +190,11 @@ const keywordsMap = std.StaticStringMap(Token).initComptime(.{
     .{ "if", .@"if" },
     .{ "else", .@"else" },
     .{ "goto", .goto },
+    .{ "do", .do },
+    .{ "while", .@"while" },
+    .{ "for", .@"for" },
+    .{ "break", .@"break" },
+    .{ "continue", .@"continue" },
 });
 
 fn lexIdentifier(self: *Lexer) LexerResult(Token) {
@@ -261,8 +266,22 @@ fn match(self: *Lexer, ch: u8) bool {
 }
 
 test Lexer {
-    const kinds = [_]Token{ .{ .identifier = "main" }, .{ .int_lit = 43 }, .lparen, .rparen, .lcub, .rcub, .semicolon, .tilde, .minus, .plus, .asterisk, .slash, .percent, .amp, .verbar, .hat, .lt_lt, .gt_gt, .excl, .amp_amp, .verbar_verbar, .equals_equals, .excl_equals, .lt, .gt, .lt_equals, .gt_equals, .equals, .plus_equals, .minus_equals, .asterisk_equals, .slash_equals, .percent_equals, .amp_equals, .verbar_equals, .hat_equals, .lt_lt_equals, .gt_gt_equals, .plus_plus, .minus_minus, .comma, .quest, .int, .void, .@"return", .@"if", .@"else", .goto };
-    const code = "main 43(){};~-+*/%&|^<<>>!&&||==!=<><=>==+=-=*=/=%=&=|=^=<<=>>=++--:? int void return if else goto";
+    const kinds = [_]Token{
+        .{ .identifier = "main" }, .{ .int_lit = 43 },
+        .lparen,        .rparen,     .lcub,          .rcub,          .semicolon,       .tilde,        .minus,          .plus, //
+        .asterisk,      .slash,      .percent,       .amp,           .verbar,          .hat,          .lt_lt,          .gt_gt,
+        .excl,          .amp_amp,    .verbar_verbar, .equals_equals, .excl_equals,     .lt,           .gt,             .lt_equals,
+        .gt_equals,     .equals,     .plus_equals,   .minus_equals,  .asterisk_equals, .slash_equals, .percent_equals, .amp_equals,
+        .verbar_equals, .hat_equals, .lt_lt_equals,  .gt_gt_equals,  .plus_plus,       .minus_minus,  .colon,          .quest,
+        .int,           .void,       .@"return",     .@"if",         .@"else",         .goto,         .do,             .@"while",
+        .@"for",        .@"break",   .@"continue",
+    };
+
+    const code =
+        \\main 43
+        \\(){};~-+*/%&|^<<>>!&&||==!=<><=>==+=-=*=/=%=&=|=^=<<=>>=++--:? 
+        \\int void return if else goto do while for break continue
+    ;
 
     var lexer = init(code);
 

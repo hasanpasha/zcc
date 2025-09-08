@@ -166,7 +166,7 @@ fn blockItem(self: *Parser) ParserResult(AST.BlockItem) {
 }
 
 fn declarationItem(self: *Parser) ParserResult(AST.BlockItem) {
-    const decl = switch (self.variableDecl()) {
+    const decl = switch (self.declaration()) {
         .ok => |val| val,
         .err => |err| return .Err(err),
     };
@@ -180,6 +180,10 @@ fn statementItem(self: *Parser) ParserResult(AST.BlockItem) {
         .err => |err| return .Err(err),
     };
     return .Ok(.{ .statement = stmt });
+}
+
+fn declaration(self: *Parser) ParserResult(AST.Declaration) {
+    return self.variableDecl();
 }
 
 fn variableDecl(self: *Parser) ParserResult(AST.Declaration) {
@@ -208,8 +212,13 @@ fn statement(self: *Parser) ParserResult(Statement) {
         .semicolon => self.nullStmt(),
         .@"if" => self.ifStmt(),
         .goto => self.gotoStmt(),
-        .identifier => if (self.peekTokenKind() == .colon) self.labeledStmtStmt() else self.expressionStmt(),
+        .identifier => if (self.peekKind() == .colon) self.labeledStmtStmt() else self.expressionStmt(),
         .lcub => self.compoundStmt(),
+        .@"break" => self.breakStmt(),
+        .@"continue" => self.continueStmt(),
+        .@"while" => self.whileStmt(),
+        .do => self.doWhileStmt(),
+        .@"for" => self.forStmt(),
         else => self.expressionStmt(),
     };
 }
@@ -306,6 +315,119 @@ fn compoundStmt(self: *Parser) ParserResult(Statement) {
         .ok => |blk| .Ok(.{ .compound = blk }),
         .err => |err| .Err(err),
     };
+}
+
+fn breakStmt(self: *Parser) ParserResult(Statement) {
+    if (self.expect(.@"break").maybe_err()) |err| return .Err(err);
+    if (self.expect(.semicolon).maybe_err()) |err| return .Err(err);
+    return .Ok(.@"break");
+}
+
+fn continueStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.@"continue").maybe_err()) |err| return .Err(err);
+    if (self.expect(.semicolon).maybe_err()) |err| return .Err(err);
+    return .Ok(.@"continue");
+}
+
+fn whileStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.@"while").maybe_err()) |err| return .Err(err);
+
+    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+    const cond = switch (self.expression()) {
+        .ok => |expr| expr.*,
+        .err => |err| return .Err(err),
+    };
+    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+
+    const body = switch (self.statement()) {
+        .ok => |stmt| self.onHeap(stmt),
+        .err => |err| return .Err(err),
+    };
+
+    return .Ok(.{ .@"while" = .{
+        .cond = cond,
+        .body = body,
+    } });
+}
+
+fn doWhileStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.do).maybe_err()) |err| return .Err(err);
+
+    const body = switch (self.statement()) {
+        .ok => |stmt| self.onHeap(stmt),
+        .err => |err| return .Err(err),
+    };
+
+    if (self.consume(.@"while").maybe_err()) |err| return .Err(err);
+
+    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+    const cond = switch (self.expression()) {
+        .ok => |expr| expr.*,
+        .err => |err| return .Err(err),
+    };
+    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+
+    return .Ok(.{ .do_while = .{
+        .cond = cond,
+        .body = body,
+    } });
+}
+
+fn forStmt(self: *Parser) ParserResult(Statement) {
+    if (self.consume(.@"for").maybe_err()) |err| return .Err(err);
+
+    if (self.consume(.lparen).maybe_err()) |err| return .Err(err);
+
+    const init: AST.Statement.For.ForInit = if (self.curKind()) |kind| switch (kind) {
+        .int => .{ .decl = switch (self.declaration()) {
+            .ok => |decl| self.onHeap(decl),
+            .err => |err| return .Err(err),
+        } },
+        .semicolon => .{ .expr = null },
+        else => .{ .expr = switch (self.expression()) {
+            .ok => |expr| expr.*,
+            .err => |err| return .Err(err),
+        } },
+    } else return .Err(self.tokensUnexpectedEnd());
+
+    if (init != .decl) if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+
+    const cond = if (self.curKind()) |kind| switch (kind) {
+        .semicolon => null,
+        else => switch (self.expression()) {
+            .ok => |expr| expr.*,
+            .err => |err| return .Err(err),
+        },
+    } else return .Err(self.tokensUnexpectedEnd());
+
+    if (self.consume(.semicolon).maybe_err()) |err| return .Err(err);
+
+    const post = if (self.curKind()) |kind| switch (kind) {
+        .rparen => null,
+        else => switch (self.expression()) {
+            .ok => |expr| expr.*,
+            .err => |err| return .Err(err),
+        },
+    } else return .Err(self.tokensUnexpectedEnd());
+
+    if (self.consume(.rparen).maybe_err()) |err| return .Err(err);
+
+    const body = switch (self.statement()) {
+        .ok => |stmt| self.onHeap(stmt),
+        .err => |err| return .Err(err),
+    };
+
+    return .Ok(.{ .@"for" = .{
+        .init = init,
+        .cond = cond,
+        .post = post,
+        .body = body,
+    } });
+}
+
+fn tokensUnexpectedEnd(self: *Parser) Error {
+    return .{ .unexpected_end_of_token_stream = self.lexer.location };
 }
 
 const Precedence = enum {
@@ -660,11 +782,18 @@ fn match(self: *Parser, kind: TokenKind) ?LocatedToken {
     return null;
 }
 
-fn peekTokenKind(self: *Parser) ?TokenKind {
-    if (self.peek) |peek|
-        return peek.@"0".kind();
+fn curKind(self: *Parser) ?TokenKind {
+    return if (self.current) |current|
+        current.@"0".kind()
+    else
+        null;
+}
 
-    return null;
+fn peekKind(self: *Parser) ?TokenKind {
+    return if (self.peek) |peek|
+        peek.@"0".kind()
+    else
+        null;
 }
 
 inline fn ltokToltk(ltok: token.LocatedToken) LocatedTokenKind {
