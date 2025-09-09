@@ -1,8 +1,9 @@
 const std = @import("std");
 const Writer = std.Io.Writer;
+
 const AST = @import("../AST.zig");
-const LIR = @import("LIR.zig");
-const PIR = @import("PIR.zig");
+pub const PIR = @import("PIR.zig");
+
 const Result = @import("../result.zig").Result;
 
 const VariableResolution = @import("VariableResolver.zig");

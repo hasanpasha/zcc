@@ -795,7 +795,7 @@ fn expect(self: *Parser, kind: TokenKind) ParserResult(LocatedToken) {
 fn expectIdentifier(self: *Parser) ParserResult(AST.Identifier) {
     return switch (self.expect(.identifier)) {
         .ok => |ltok| .Ok(.{
-            .name = ltok.@"0".identifier,
+            .name = self.allocator.dupe(u8, ltok.@"0".identifier) catch @panic("OOM"),
             .location = ltok.@"1",
         }),
         .err => |err| .Err(err),

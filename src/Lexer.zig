@@ -13,6 +13,7 @@ src: []const u8,
 position: usize = 0,
 location: Location = .start,
 ch: ?u8 = null,
+allocator: std.mem.Allocator,
 
 const Lexer = @This();
 
@@ -40,13 +41,22 @@ pub fn LexerResult(OkType: type) type {
     return Result(OkType, Error);
 }
 
-pub fn init(source_code: []const u8) Lexer {
-    var self = Lexer{ .src = source_code };
+pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Lexer {
+    const file = try std.fs.cwd().openFile(filepath, .{});
+    defer file.close();
+
+    const source_code = try file.readToEndAlloc(allocator, 65000);
+
+    var self = Lexer{ .src = source_code, .allocator = allocator };
 
     if (self.src.len > 0)
         self.ch = self.src[self.position];
 
     return self;
+}
+
+pub fn deinit(self: Lexer) void {
+    self.allocator.free(self.src);
 }
 
 pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {

@@ -7,6 +7,7 @@ pub const LocatedToken = struct { Token, Location };
 
 pub const LocatedTokenKind = struct { TokenKind, Location };
 
+//TODO: refactor
 pub const TokenKind = enum {
     // identifiers
     identifier,
@@ -70,6 +71,8 @@ pub const TokenKind = enum {
     @"break",
     @"continue",
 };
+
+// pub const TokenKind = std.meta.Tag(Token);
 
 pub const Token = union(TokenKind) {
     identifier: []const u8,

@@ -1,9 +1,10 @@
 const std = @import("std");
-const Lexer = @import("Lexer.zig");
-const Parser = @import("Parser.zig");
-const TackyIRGenerator = @import("TackyIRGenerator.zig");
-const semantic_analyzer = @import("semantic_analyzer/root.zig");
-const asm_generator = @import("asm_generator.zig");
+
+const driver = @import("driver.zig");
+const CFile = driver.CFile;
+const TranslationUnit = driver.TranslationUnit;
+const AsmFile = driver.AsmFile;
+const ObjectFile = driver.ObjectFile;
 
 const exit = std.process.exit;
 
@@ -18,36 +19,51 @@ const Options = struct {
     validate: bool = false,
     tacky: bool = false,
     codegen: bool = false,
-    filepath: []const u8,
+    compile: bool = false,
+    assemble: bool = false,
+    output: ?[]const u8 = null,
+    cfiles: []const CFile,
 
-    pub fn get(allocator: std.mem.Allocator) Options {
+    arena: std.heap.ArenaAllocator,
+
+    pub fn deinit(self: Options) void {
+        self.arena.deinit();
+    }
+
+    pub fn get(allocator: std.mem.Allocator) !Options {
         const params = comptime clap.parseParamsComptime(
-            \\-h, --help            Display this help and exit.
-            \\--version             Print version and exit.
-            \\-v, --verbose         An optiona to log all infos.
-            \\--lex                 Lex only and exit.
-            \\--parse               Parse only and exit.
-            \\--validate            Validate the parsed program and exit.
-            \\--tacky               Generate tacky ir and exit.
-            \\--codegen             Generate asm and exit without emiting file.
-            \\<FILE>
+            \\-h, --help                Display this help and exit.
+            \\--version                 Print version and exit.
+            \\-v, --verbose             An optiona to log all infos.
+            \\--lex                     Lex only and exit.
+            \\--parse                   Parse only and exit.
+            \\--validate                Validate the parsed program and exit.
+            \\--tacky                   Generate tacky ir and exit.
+            \\--codegen                 Generate asm and exit without emiting file.
+            \\-c, --compile             Compile only without linking
+            \\-S, --assemble            Assemble only and exit
+            \\-o, --output <FILE>       Specify output path
+            \\<FILE>...
         );
 
         const parsers = comptime .{
             .FILE = clap.parsers.string,
         };
 
+        var arena = std.heap.ArenaAllocator.init(allocator);
+
         var diag = clap.Diagnostic{};
-        var res = clap.parse(clap.Help, &params, parsers, .{
+        const res = clap.parse(clap.Help, &params, parsers, .{
             .diagnostic = &diag,
-            .allocator = allocator,
+            .allocator = arena.allocator(),
         }) catch |err| {
             diag.reportToFile(.stderr(), err) catch {};
             exit(1);
         };
-        defer res.deinit();
 
         var self: Options = undefined;
+
+        self.arena = arena;
 
         if (res.args.help != 0) help(params, null);
         if (res.args.version != 0) version();
@@ -57,9 +73,20 @@ const Options = struct {
         if (res.args.parse != 0) self.parse = true;
         if (res.args.validate != 0) self.validate = true;
         if (res.args.tacky != 0) self.tacky = true;
+        if (res.args.compile != 0) self.compile = true;
+        if (res.args.assemble != 0) self.assemble = true;
+
+        self.output = res.args.output;
+
         if (res.args.codegen != 0) self.codegen = true;
 
-        self.filepath = res.positionals[0] orelse help(params, "no input");
+        const paths: []const []const u8 = res.positionals.@"0";
+
+        var cfiles = try std.ArrayList(CFile).initCapacity(arena.allocator(), 128);
+        for (paths) |path|
+            try cfiles.append(allocator, .{ .path = path });
+
+        self.cfiles = try cfiles.toOwnedSlice(arena.allocator());
 
         return self;
     }
@@ -87,94 +114,85 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
     defer if (gpa.deinit() == .leak) @panic("memory leak");
 
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
 
-    const options = Options.get(allocator);
+    const allocator = arena.allocator();
 
-    const processed_file = try replaceExtension(options.filepath, ".cc", allocator);
-    defer allocator.free(processed_file);
+    const options = try Options.get(allocator);
+    defer options.deinit();
 
-    var pre_child = std.process.Child.init(&.{ "gcc", "-E", "-P", options.filepath, "-o", processed_file }, allocator);
-    const prepocess_res = try pre_child.spawnAndWait();
-    switch (prepocess_res) {
-        .Exited => |code| if (code != 0) exit(code),
-        inline else => |code| exit(@truncate(code)),
-    }
+    var units = try allocator.alloc(TranslationUnit, options.cfiles.len);
+    defer for (units) |*unit| unit.deleter.delete() catch @panic("Can't delete");
 
-    const file = try std.fs.cwd().openFile(processed_file, .{});
-    defer file.close();
-    const source = try file.readToEndAlloc(allocator, 65000);
-    defer allocator.free(source);
+    for (options.cfiles, 0..) |cfile, i|
+        units[i] = try cfile.toTranslationUnit(.x86_64, allocator);
 
-    var lexer = Lexer.init(source);
+    var asm_files = try allocator.alloc(AsmFile, units.len);
+    defer if (!options.assemble) for (asm_files) |*asm_file|
+        asm_file.delete() catch @panic("Can't delete");
 
-    if (options.lex) {
-        while (lexer.next().unwrap()) |ltok| {
-            const tok, const loc = ltok;
-            std.log.debug("{s}:{}:{} {f}", .{ processed_file, loc.line, loc.column, tok });
+    for (units, 0..) |unit, i| {
+        if (options.lex) {
+            var lexer = try unit.lex(allocator);
+            defer lexer.deinit();
+
+            while (lexer.next().unwrap()) |ltok| {
+                const tok, const loc = ltok;
+                std.debug.print("{s}:{}:{}: {f}\n", .{
+                    unit.path,
+                    loc.line,
+                    loc.column,
+                    tok,
+                });
+            }
+            return;
         }
-        exit(0);
-    }
 
-    var ast = Parser.parse(lexer, allocator).unwrap();
-    defer ast.free();
-
-    if (options.parse) {
-        std.log.info("{f}", .{ast});
-        exit(0);
-    }
-
-    var validated_ast = semantic_analyzer.analyze(ast, allocator).unwrap();
-    defer validated_ast.free();
-
-    if (options.validate) {
-        std.log.info("{f}", .{validated_ast});
-        exit(0);
-    }
-
-    var tir = TackyIRGenerator.lower(validated_ast, allocator);
-    defer tir.free();
-
-    if (options.tacky) {
-        std.log.info("{f}", .{std.fmt.alt(tir, .prettyFmt)});
-        exit(0);
-    }
-
-    var air = asm_generator.lower(tir, .x86_64, allocator);
-    defer air.free();
-
-    if (options.codegen) {
-        std.log.info("{f}", .{air});
-        exit(0);
-    }
-
-    const asm_file = try replaceExtension(options.filepath, ".s", allocator);
-    defer allocator.free(asm_file);
-    try air.emitToFile(asm_file);
-
-    const exe_file = try replaceExtension(options.filepath, "", allocator);
-    defer allocator.free(exe_file);
-
-    var child = std.process.Child.init(&.{ "gcc", asm_file, "-o", exe_file }, allocator);
-    const result = try child.spawnAndWait();
-    switch (result) {
-        .Exited => |code| exit(code),
-        inline else => |_| {},
-    }
-}
-
-fn replaceExtension(str: []const u8, ext: []const u8, allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
-    var output = std.array_list.Managed(u8).init(allocator);
-
-    var iter = std.mem.splitScalar(u8, str, '.');
-
-    while (iter.next()) |part| {
-        if (iter.peek() == null) {
-            try output.appendSlice(ext);
-        } else {
-            try output.appendSlice(part);
+        if (options.parse) {
+            var ast = try unit.parse(allocator);
+            defer ast.free();
+            std.debug.print("{f}\n", .{ast});
+            return;
         }
+
+        if (options.validate) {
+            var pir = try unit.validate(allocator);
+            defer pir.free();
+            std.debug.print("{f}\n", .{pir});
+            return;
+        }
+
+        if (options.tacky) {
+            var tir = try unit.tacky(allocator);
+            defer tir.free();
+            std.debug.print("{f}\n", .{tir});
+            return;
+        }
+
+        if (options.codegen) {
+            var pir = try unit.codegen(allocator);
+            defer pir.free();
+            std.debug.print("{f}\n", .{pir});
+            return;
+        }
+
+        asm_files[i] = try unit.toAsmFile(allocator);
     }
 
-    return try output.toOwnedSlice();
+    if (options.assemble) return;
+
+    var objects = try allocator.alloc(ObjectFile, asm_files.len);
+    defer if (!options.compile) for (objects) |*object|
+        object.deleter.delete() catch @panic("Can't delete");
+
+    for (asm_files, 0..) |asm_file, i|
+        objects[i] = try asm_file.toObjectFile(allocator);
+
+    if (options.compile) return;
+
+    const exe_output = options.output orelse try driver.replaceExtension(options.cfiles[0].path, "", allocator);
+    defer if (options.output == null) allocator.free(exe_output);
+
+    try driver.link(objects, exe_output, allocator);
 }
