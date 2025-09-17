@@ -1,103 +1,34 @@
 const std = @import("std");
 const Writer = std.Io.Writer;
-const Token = @import("Token.zig");
-const TokenKind = Token.TokenKind;
-const Span = Token.Span;
-const Location = @import("Location.zig");
-const LexerError = @import("Token.zig").Error;
+const TokenKind = @import("Token.zig").TokenKind;
 
-pub fn Located(T: type) type {
-    return struct { T, Token.Span };
-}
+const PIR = @This();
 
-pub const LocatedTokenKind = Located(TokenKind);
+declarations: []Declaration,
 
-pub const LDeclaration = Located(Declaration);
-
-const AST = @This();
-
-declarations: []LDeclaration,
-
-/// not part of the AST
+/// not part of the PIR
 arena: std.heap.ArenaAllocator,
 
-pub fn free(self: AST) void {
+pub fn free(self: PIR) void {
     self.arena.deinit();
 }
 
 pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-    try w.writeAll("AST{ ");
-    for (self.declarations, 1..) |ldecl, i| {
-        const decl, _ = ldecl;
-        try w.print("SpannedDecl{{ decl: {f}", .{decl});
+    try w.writeAll("PIR{ ");
+    for (self.declarations, 1..) |decl, i| {
+        try w.print("{f}", .{decl});
         if (i < self.declarations.len)
             try w.writeAll(", ");
     }
     try w.writeAll(" }");
 }
 
-pub const Identifier = struct {
-    name: []const u8,
-    unique_name: []const u8 = "",
-    span: Span,
-
-    pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-        try w.print("Identifier{{ name: {s}, unique: {s} }}", .{
-            self.name,
-            self.unique_name,
-                // self.span,
-        });
-    }
-
-    pub fn applyUniqueName(self: *Identifier, name: []const u8) Identifier {
-        // self.*.unique_name = name;
-        // return self.*;
-        return .{
-            .name = self.name,
-            .unique_name = name,
-            .span = self.span,
-        };
-    }
-};
-
-pub const Error = union(enum) {
-    expected_type,
-    unexpected_token: TokenKind,
-    expected_operator: enum {
-        prefix_unary,
-        suffix_unary,
-        binary,
-        assignment,
-    },
-    token_not_operator: Token,
-    missing_semi,
-    missing_label,
-    missing_while_part,
-    eoi: Location,
-    lexer_error: LexerError,
-    duplicate: []const u8,
-    invalid_lvalue,
-    undeclared: []const u8,
-    break_stmt_outside_of_loop_or_switch,
-    continue_stmt_outside_of_loop,
-    multiple_defaults,
-    case_stmt_outside_of_switch,
-    default_stmt_outside_of_switch,
-    multiple_case_stmts_have_same_constant_expr,
-
-    pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-        try w.print("{s}", .{@tagName(self)});
-    }
-};
-
 pub const DeclarationKind = enum {
-    err,
     function,
     variable,
 };
 
 pub const Declaration = union(DeclarationKind) {
-    err: Error,
     function: Function,
     variable: Variable,
 
@@ -108,11 +39,11 @@ pub const Declaration = union(DeclarationKind) {
     }
 
     pub const Variable = struct {
-        name: Identifier,
+        name: []const u8,
         init: ?Expression,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-            try w.print("VariableDecl{{ name: {f}, init: ", .{self.name});
+            try w.print("VariableDecl{{ name: {s}, init: ", .{self.name});
             if (self.init) |init| {
                 try w.print("{f}", .{init});
             } else {
@@ -123,11 +54,11 @@ pub const Declaration = union(DeclarationKind) {
     };
 
     pub const Function = struct {
-        name: Identifier,
+        name: []const u8,
         body: Block,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-            try w.print("FunctionDecl{{ name: {f}, body: {f} }}", .{ self.name, self.body });
+            try w.print("FunctionDecl{{ name: {s}, body: {f} }}", .{ self.name, self.body });
         }
     };
 };
@@ -147,19 +78,16 @@ pub const Block = struct {
 };
 
 pub const BlockItemKind = enum {
-    err,
     statement,
     declaration,
 };
 
 pub const BlockItem = union(BlockItemKind) {
-    err: Error,
     statement: Statement,
     declaration: *Declaration,
 
     pub fn format(self: @This(), w: *Writer) Writer.Error!void {
         switch (self) {
-            .err => |err| try w.print("BlockItemErr{{ {f} }}", .{err}),
             .statement => |stmt| try w.print("StmtItem{{ {f} }}", .{stmt}),
             .declaration => |decl| try w.print("DeclItem{{ {f} }}", .{decl.*}),
         }
@@ -167,7 +95,6 @@ pub const BlockItem = union(BlockItemKind) {
 };
 
 pub const StatementKind = enum {
-    err,
     @"return",
     expr,
     null,
@@ -186,12 +113,11 @@ pub const StatementKind = enum {
 };
 
 pub const Statement = union(StatementKind) {
-    err: Error,
     @"return": Expression,
     expr: Expression,
     null,
     @"if": If,
-    goto: Identifier,
+    goto: []const u8,
     labeled_stmt: LabeledStmt,
     compound: Block,
     @"break": []const u8,
@@ -208,7 +134,7 @@ pub const Statement = union(StatementKind) {
             .@"return" => |expr| try w.print("ReturnStmt{{ {f} }}", .{expr}),
             .expr => |expr| try w.print("ExprStmt{{ {f} }}", .{expr}),
             .null => try w.writeAll("NullStmt"),
-            .goto => |target| try w.print("GotoStmt{{ {f} }}", .{target}),
+            .goto => |target| try w.print("GotoStmt{{ {s} }}", .{target}),
             .compound => |blk| try w.print("BlockStmt{{ {f} }}", .{blk}),
             .@"break" => |label| try w.print("BreakStmt{{ {s} }}", .{label}),
             .@"continue" => |label| try w.print("ContinueStmt{{ {s} }}", .{label}),
@@ -233,18 +159,18 @@ pub const Statement = union(StatementKind) {
     };
 
     pub const LabeledStmt = struct {
-        label: Identifier,
+        label: []const u8,
         stmt: *Statement,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-            try w.print("LabeledStmtStmt{{ label: {f}, stmt: {f} }}", .{ self.label, self.stmt.* });
+            try w.print("LabeledStmtStmt{{ label: {s}, stmt: {f} }}", .{ self.label, self.stmt.* });
         }
     };
 
     pub const While = struct {
         cond: Expression,
         body: *Statement,
-        label: []const u8 = "",
+        label: []const u8,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("WhileStmt{{ cond: {f}, body: {f}, label: {s} }}", .{ self.cond, self.body.*, self.label });
@@ -254,7 +180,7 @@ pub const Statement = union(StatementKind) {
     pub const DoWhile = struct {
         body: *Statement,
         cond: Expression,
-        label: []const u8 = "",
+        label: []const u8,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("DoWhileStmt{{ body: {f}, cond: {f}, label: {s} }}", .{ self.body.*, self.cond, self.label });
@@ -266,7 +192,7 @@ pub const Statement = union(StatementKind) {
         cond: ?Expression,
         post: ?Expression,
         body: *Statement,
-        label: []const u8 = "",
+        label: []const u8,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("ForStmt{{ init: {f}, cond: ", .{self.init});
@@ -308,9 +234,9 @@ pub const Statement = union(StatementKind) {
     pub const Switch = struct {
         cond: Expression,
         body: *Statement,
-        label: []const u8 = "",
-        cases: []const Case = &.{},
-        default: ?Default = null,
+        label: []const u8,
+        cases: []const CaseLabel,
+        default: ?[]const u8,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("SwitchStmt{{ cond: {f}, body: {f}, label: {s}, cases: {{ ", .{ self.cond, self.body.*, self.label });
@@ -321,18 +247,27 @@ pub const Statement = union(StatementKind) {
             }
             try w.writeAll(" }, default: ");
             if (self.default) |default| {
-                try w.print("{f}", .{default});
+                try w.writeAll(default);
             } else {
                 try w.writeAll("null");
             }
             try w.writeAll(" }");
         }
+
+        pub const CaseLabel = struct {
+            expr: Expression,
+            label: []const u8,
+
+            pub fn format(self: @This(), w: *Writer) Writer.Error!void {
+                try w.print("SwitchCaseLabel{{ expr: {f}, label: {s} }}", .{ self.expr, self.label });
+            }
+        };
     };
 
     pub const Case = struct {
         expr: Expression,
         stmt: ?*Statement,
-        label: []const u8 = "",
+        label: []const u8,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("CaseStmt{{ expr: {f}, stmt: ", .{self.expr});
@@ -347,7 +282,7 @@ pub const Statement = union(StatementKind) {
 
     pub const Default = struct {
         stmt: ?*Statement = null,
-        label: []const u8 = "",
+        label: []const u8,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.writeAll("DefaultStmt{ stmt: ");
@@ -362,7 +297,6 @@ pub const Statement = union(StatementKind) {
 };
 
 pub const ExpressionKind = enum {
-    err,
     int_lit,
     binary,
     lhs_unary,
@@ -373,40 +307,30 @@ pub const ExpressionKind = enum {
 };
 
 pub const Expression = union(ExpressionKind) {
-    err: Error,
-    int_lit: IntLit,
+    int_lit: u128,
     binary: Binary,
     lhs_unary: LhsUnary,
     rhs_unary: RhsUnary,
-    variable: Identifier,
+    variable: []const u8,
     assignment: Assignment,
     conditional: Conditional,
 
     pub fn format(self: @This(), w: *Writer) Writer.Error!void {
         switch (self) {
-            .int_lit => |value| try w.print("IntLitExpr{{ {f} }}", .{value}),
-            .variable => |name| try w.print("VariableExpr{{ {f} }}", .{name}),
+            .int_lit => |value| try w.print("IntLitExpr{{ {} }}", .{value}),
+            .variable => |name| try w.print("VariableExpr{{ {s} }}", .{name}),
             inline else => |expr| try w.print("{f}", .{expr}),
         }
     }
 
-    pub const IntLit = struct {
-        value: u128,
-        span: Span,
-
-        pub fn format(self: @This(), w: *Writer) Writer.Error!void {
-            try w.print("IntLit{{ value: {} }}", .{self.value});
-        }
-    };
-
     pub const Binary = struct {
-        operator: LocatedTokenKind,
+        operator: TokenKind,
         lhs: *Expression,
         rhs: *Expression,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("BinaryExpr{{ operator: {s}, lhs: {f}, rhs: {f} }}", .{
-                @tagName(self.operator.@"0"),
+                @tagName(self.operator),
                 self.lhs.*,
                 self.rhs.*,
             });
@@ -414,37 +338,37 @@ pub const Expression = union(ExpressionKind) {
     };
 
     pub const LhsUnary = struct {
-        operator: LocatedTokenKind,
+        operator: TokenKind,
         rhs: *Expression,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("LhsUnaryExpr{{ operator: {s}, rhs: {f} }}", .{
-                @tagName(self.operator.@"0"),
+                @tagName(self.operator),
                 self.rhs.*,
             });
         }
     };
 
     pub const RhsUnary = struct {
-        operator: LocatedTokenKind,
+        operator: TokenKind,
         lhs: *Expression,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("RhsUnaryExpr{{ operator: {s}, lhs: {f} }}", .{
-                @tagName(self.operator.@"0"),
+                @tagName(self.operator),
                 self.lhs.*,
             });
         }
     };
 
     pub const Assignment = struct {
-        operator: LocatedTokenKind,
+        operator: TokenKind,
         lhs: *Expression,
         rhs: *Expression,
 
         pub fn format(self: @This(), w: *Writer) Writer.Error!void {
             try w.print("AssignmentExpr{{ operator: {s}, lhs: {f}, rhs: {f} }}", .{
-                @tagName(self.operator.@"0"),
+                @tagName(self.operator),
                 self.lhs.*,
                 self.rhs.*,
             });

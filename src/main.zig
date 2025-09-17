@@ -5,6 +5,7 @@ const CFile = driver.CFile;
 const TranslationUnit = driver.TranslationUnit;
 const AsmFile = driver.AsmFile;
 const ObjectFile = driver.ObjectFile;
+const Stripper = @import("Stripper.zig");
 
 const exit = std.process.exit;
 
@@ -111,69 +112,78 @@ const Options = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-    defer if (gpa.deinit() == .leak) @panic("memory leak");
+    // var gpa = std.heap.GeneralPurposeAllocator(.{ .verbose_log = false }).init;
+    // defer if (gpa.deinit() == .leak) @panic("memory leak");
 
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit();
+    // var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    // defer arena.deinit();
 
-    const allocator = arena.allocator();
+    // const allocator = arena.allocator();
+    // const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     const options = try Options.get(allocator);
     defer options.deinit();
 
     var units = try allocator.alloc(TranslationUnit, options.cfiles.len);
-    defer for (units) |*unit| unit.deleter.delete() catch @panic("Can't delete");
+    // defer for (units) |*unit| unit.deleter.delete() catch @panic("Can't delete");
 
     for (options.cfiles, 0..) |cfile, i|
         units[i] = try cfile.toTranslationUnit(.x86_64, allocator);
 
     var asm_files = try allocator.alloc(AsmFile, units.len);
-    defer if (!options.assemble) for (asm_files) |*asm_file|
-        asm_file.delete() catch @panic("Can't delete");
+    // defer if (!options.assemble) for (asm_files) |*asm_file|
+    //     asm_file.delete() catch @panic("Can't delete");
 
     for (units, 0..) |unit, i| {
         if (options.lex) {
             var lexer = try unit.lex(allocator);
             defer lexer.deinit();
 
-            while (lexer.next().unwrap()) |ltok| {
-                const tok, const loc = ltok;
+            while (lexer.next()) |tok| {
                 std.debug.print("{s}:{}:{}: {f}\n", .{
                     unit.path,
-                    loc.line,
-                    loc.column,
-                    tok,
+                    tok.span.@"0".line,
+                    tok.span.@"1".column,
+                    tok.variant,
                 });
             }
             return;
         }
 
         if (options.parse) {
-            var ast = try unit.parse(allocator);
-            defer ast.free();
-            std.debug.print("{f}\n", .{ast});
+            const ast = try unit.parse(allocator);
+            // defer ast.free();
+
+            std.log.debug("{f}", .{ast});
+
+            _ = try TranslationUnit.strip(ast, allocator);
+            // std.log.debug("{f}", .{pir});
             return;
         }
 
         if (options.validate) {
-            var pir = try unit.validate(allocator);
-            defer pir.free();
-            std.debug.print("{f}\n", .{pir});
+            const ast, _ = try unit.validate(allocator);
+            // defer ast.free();
+
+            std.log.debug("{f}", .{ast});
+
+            const pir = try TranslationUnit.strip(ast, allocator);
+            std.log.debug("{f}", .{pir});
             return;
         }
 
         if (options.tacky) {
-            var tir = try unit.tacky(allocator);
-            defer tir.free();
+            const tir = try unit.tacky(allocator);
+            // defer tir.free();
             std.debug.print("{f}\n", .{tir});
             return;
         }
 
         if (options.codegen) {
-            var pir = try unit.codegen(allocator);
-            defer pir.free();
-            std.debug.print("{f}\n", .{pir});
+            const air = try unit.codegen(allocator);
+            // defer pir.free();
+            std.debug.print("{f}\n", .{air});
             return;
         }
 
@@ -183,8 +193,8 @@ pub fn main() !void {
     if (options.assemble) return;
 
     var objects = try allocator.alloc(ObjectFile, asm_files.len);
-    defer if (!options.compile) for (objects) |*object|
-        object.deleter.delete() catch @panic("Can't delete");
+    // defer if (!options.compile) for (objects) |*object|
+    //     object.deleter.delete() catch @panic("Can't delete");
 
     for (asm_files, 0..) |asm_file, i|
         objects[i] = try asm_file.toObjectFile(allocator);
@@ -196,3 +206,179 @@ pub fn main() !void {
 
     try driver.link(objects, exe_output, allocator);
 }
+
+// const AST = @import("AST.zig");
+// fn hasErrors(ast: AST) bool {
+//     var has = false;
+//     for (ast.declarations) |ldecl| {
+//         const decl, const span = ldecl;
+//         std.log.debug("start: {}:{}, end: {}:{}", .{
+//             span.@"0".line,
+//             span.@"0".column,
+//             span.@"1".line,
+//             span.@"1".column,
+//         });
+//         if (declaration(decl)) {
+//             has = true;
+//             std.log.err("decl error: start at: {}:{} which ends at {}:{}", .{
+//                 span.@"0".line,
+//                 span.@"0".column,
+//                 span.@"1".line,
+//                 span.@"1".column,
+//             });
+//         }
+//     }
+//     return has;
+// }
+
+// fn function(func: AST.Declaration.Function) bool {
+//     const has = block(func.body);
+//     if (has) std.log.err("error in {s} function", .{func.name.name});
+//     return has;
+// }
+
+// fn block(b: AST.Block) bool {
+//     var has = false;
+//     var num: usize = 0;
+//     for (b.items) |item| {
+//         const this_has = block_item(item);
+//         if (this_has) {
+//             has = true;
+//             num += 1;
+//         }
+//     }
+//     if (has) std.log.err("error in {} items", .{num});
+//     return has;
+// }
+
+// fn block_item(b: AST.BlockItem) bool {
+//     switch (b) {
+//         .err => |err| {
+//             std.log.err("{}", .{err});
+//             return true;
+//         },
+//         .declaration => |decl| return declaration(decl.*),
+//         .statement => |stmt| return statement(stmt),
+//     }
+// }
+
+// fn declaration(d: AST.Declaration) bool {
+//     switch (d) {
+//         .err => |err| {
+//             std.log.err("{}", .{err});
+//             return true;
+//         },
+//         .function => |func| return function(func),
+//         .variable => |_var| if (_var.init) |init| return expression(init),
+//     }
+//     return false;
+// }
+
+// fn statement(s: AST.Statement) bool {
+//     return switch (s) {
+//         .err => |err| {
+//             std.log.err("{}", .{err});
+//             return true;
+//         },
+//         .@"return" => |val| expression(val),
+//         .@"if" => |_if| {
+//             var has = false;
+//             if (expression(_if.cond)) has = true;
+//             if (statement(_if.then.*)) has = true;
+//             if (_if.or_else) |or_else| if (statement(or_else.*)) {
+//                 has = true;
+//             };
+//             return has;
+//         },
+//         .null => false,
+//         .labeled_stmt => |stmt| statement(stmt.stmt.*),
+//         .goto => false,
+//         .expr => |e| expression(e),
+//         .compound => |b| block(b),
+//         .@"break" => false,
+//         .@"continue" => false,
+//         .@"while" => |_while| {
+//             var has = false;
+//             if (expression(_while.cond)) has = true;
+//             if (statement(_while.body.*)) has = true;
+//             return has;
+//         },
+//         .do_while => |do| {
+//             var has = false;
+//             if (statement(do.body.*)) has = true;
+//             if (expression(do.cond)) has = true;
+//             return has;
+//         },
+//         .@"for" => |_for| {
+//             var has = false;
+//             switch (_for.init) {
+//                 .decl => |decl| if (declaration(decl.*)) {
+//                     has = true;
+//                 },
+//                 .expr => |ex| if (ex) |e| if (expression(e)) {
+//                     has = true;
+//                 },
+//             }
+//             if (_for.cond) |cond| if (expression(cond)) {
+//                 has = true;
+//             };
+//             if (_for.post) |post| if (expression(post)) {
+//                 has = true;
+//             };
+//             if (statement(_for.body.*)) has = true;
+//             return has;
+//         },
+//         .@"switch" => |_switch| {
+//             var has = false;
+//             if (expression(_switch.cond)) has = true;
+//             if (statement(_switch.body.*)) has = true;
+//             return has;
+//         },
+//         .case => |case| {
+//             var has = false;
+//             if (expression(case.expr)) has = true;
+//             if (case.stmt) |cs| if (statement(cs.*)) {
+//                 has = true;
+//             };
+//             return has;
+//         },
+//         .default => |def| {
+//             if (def.stmt) |or_else| if (statement(or_else.*)) {
+//                 return true;
+//             };
+//             return false;
+//         },
+//     };
+// }
+
+// fn expression(e: AST.Expression) bool {
+//     return switch (e) {
+//         .err => |err| {
+//             std.log.err("{}", .{err});
+//             return true;
+//         },
+//         .int_lit => false,
+//         .lhs_unary => |unary| expression(unary.rhs.*),
+//         .rhs_unary => |unary| expression(unary.lhs.*),
+//         .binary => |binary| {
+//             var has = false;
+//             if (expression(binary.lhs.*)) has = true;
+//             if (expression(binary.rhs.*)) has = true;
+//             return has;
+//         },
+//         .assignment => |assign| {
+//             var has = false;
+//             if (expression(assign.lhs.*)) has = true;
+//             if (expression(assign.rhs.*)) has = true;
+//             return has;
+//         },
+//         .conditional => |cond| {
+//             var has = false;
+//             if (expression(cond.cond.*)) has = true;
+//             if (expression(cond.if_true.*)) has = true;
+//             if (expression(cond.if_false.*)) has = true;
+//             return has;
+//         },
+//         .variable => false,
+//     };
+// }

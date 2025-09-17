@@ -4,7 +4,8 @@ const Lexer = @import("Lexer.zig");
 const AST = @import("AST.zig");
 const Parser = @import("Parser.zig");
 const semantic_analyzer = @import("semantic_analyzer/root.zig");
-const PIR = semantic_analyzer.PIR;
+const PIR = @import("PIR.zig");
+const Stripper = @import("Stripper.zig");
 const TackyIR = @import("TackyIR.zig");
 const TackyIRGenerator = @import("TackyIRGenerator.zig");
 const asm_generator = @import("asm_generator.zig");
@@ -66,40 +67,55 @@ pub const TranslationUnit = struct {
     deleter: Deleter(@This()) = .{},
 
     pub fn lex(self: TranslationUnit, allocator: std.mem.Allocator) !Lexer {
-        return try Lexer.init(self.path, allocator);
+        return try Lexer.new(self.path, allocator);
+    }
+
+    pub fn strip(ast: AST, allocator: std.mem.Allocator) !PIR {
+        var buffer: [1024]u8 = undefined;
+        const stdout_file = std.fs.File.stderr();
+        var stdout_writer = stdout_file.writer(&buffer);
+        const stdout = &stdout_writer.interface;
+
+        const pir = Stripper.strip(ast, allocator, stdout) catch |err| {
+            if (err == Stripper.Error.has_errors) std.process.exit(1);
+            return err;
+        };
+
+        return pir;
     }
 
     pub fn parse(self: TranslationUnit, allocator: std.mem.Allocator) !AST {
         const lexer = try self.lex(allocator);
-        defer lexer.deinit();
+        // defer lexer.deinit();
 
-        return Parser.parse(lexer, allocator).unwrap();
+        return try Parser.parse(lexer, allocator);
     }
 
-    pub fn validate(self: TranslationUnit, allocator: std.mem.Allocator) !PIR {
-        const ast = try self.parse(allocator);
-        defer ast.free();
-
-        return semantic_analyzer.analyze(ast, allocator).unwrap();
+    pub fn validate(self: TranslationUnit, allocator: std.mem.Allocator) !struct { AST, struct { usize, usize } } {
+        var ast = try self.parse(allocator);
+        const counters = try semantic_analyzer.analyze(&ast);
+        return .{ ast, counters };
     }
 
     pub fn tacky(self: TranslationUnit, allocator: std.mem.Allocator) !TackyIR {
-        const pir = try self.validate(allocator);
-        defer pir.free();
+        const ast, const counter = try self.validate(allocator);
+        // defer ast.free();
 
-        return TackyIRGenerator.lower(pir, allocator);
+        const pir = try strip(ast, allocator);
+
+        return TackyIRGenerator.lower(pir, allocator, counter);
     }
 
     pub fn codegen(self: TranslationUnit, allocator: std.mem.Allocator) !AIR {
         const tir = try self.tacky(allocator);
-        defer tir.free();
+        // defer tir.free();
 
         return asm_generator.lower(tir, self.arch, allocator);
     }
 
     pub fn toAsmFile(self: TranslationUnit, allocator: std.mem.Allocator) !AsmFile {
         const air = try self.codegen(allocator);
-        defer air.free();
+        // defer air.free();
 
         const output = try replaceExtension(self.path, ".s", allocator);
 

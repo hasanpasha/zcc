@@ -1,6 +1,7 @@
 const std = @import("std");
+const AllocErr = std.mem.Allocator.Error;
 
-const PIR = @import("semantic_analyzer/PIR.zig");
+const PIR = @import("PIR.zig");
 
 const TackyIR = @import("TackyIR.zig");
 const Function = TackyIR.Function;
@@ -11,25 +12,28 @@ const oneOf = @import("utils.zig").oneOf;
 
 instrs: std.array_list.Managed(Instruction),
 allocator: std.mem.Allocator,
-var_counter: usize = 0,
-label_counter: usize = 0,
+var_counter: usize,
+label_counter: usize,
 
 const TackyIRGenerator = @This();
 
-pub fn lower(ast: PIR, allocator: std.mem.Allocator) TackyIR {
+pub fn lower(ast: PIR, allocator: std.mem.Allocator, counters: struct { usize, usize }) AllocErr!TackyIR {
     var arena = std.heap.ArenaAllocator.init(allocator);
 
     var self = TackyIRGenerator{
         .instrs = .init(arena.allocator()),
         .allocator = arena.allocator(),
+        .var_counter = counters.@"0",
+        .label_counter = counters.@"1",
     };
 
-    const func = self.function(ast.main_function);
+    // const func = self.function(ast.main_function);
+    const func = self.function(ast.declarations[0].function);
 
     return .{ .main = func, .arena = arena };
 }
 
-fn function(self: *TackyIRGenerator, ast_func: PIR.Function) Function {
+fn function(self: *TackyIRGenerator, ast_func: PIR.Declaration.Function) Function {
     const previous_instrs = self.instrs;
 
     self.instrs = .init(self.allocator);
@@ -43,12 +47,12 @@ fn function(self: *TackyIRGenerator, ast_func: PIR.Function) Function {
 
     const instrs = self.instrs.toOwnedSlice() catch @panic("OOM");
 
-    return .{ .identifier = ast_func.name, .instructions = instrs };
+    return .{ .identifier = self.dupe(ast_func.name), .instructions = instrs };
 }
 
 fn instruction(self: *TackyIRGenerator, item: PIR.BlockItem) void {
     switch (item) {
-        .declaration => |decl| self.declInstruction(decl),
+        .declaration => |decl| self.declInstruction(decl.*),
         .statement => |stmt| self.stmtInstruction(stmt),
     }
 }
@@ -57,10 +61,14 @@ fn declInstruction(self: *TackyIRGenerator, decl: PIR.Declaration) void {
     switch (decl) {
         .variable => |variable| {
             if (variable.init) |init| {
+                std.log.debug("var decl: {s}", .{variable.name});
+                const dst = Value{ .variable = self.dupe(variable.name) };
                 const val = self.value(init);
-                const dst = Value{ .variable = variable.name };
                 self.addInstr(.{ .copy = .{ .src = val, .dst = dst } });
             }
+        },
+        .function => |func| {
+            _ = self.function(func);
         },
     }
 }
@@ -92,9 +100,9 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
             }
             self.addInstr(.{ .label = end_label });
         },
-        .goto => |target| self.addInstr(.{ .jump = target }),
+        .goto => |target| self.addInstr(.{ .jump = self.dupe(target) }),
         .labeled_stmt => |ls| {
-            self.addInstr(.{ .label = ls.label });
+            self.addInstr(.{ .label = self.dupe(ls.label) });
             self.stmtInstruction(ls.stmt.*);
         },
         .compound => |compound| for (compound.items) |item|
@@ -105,13 +113,13 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
             const break_label = self.breakLabel(_while.label);
             const continue_label = self.continueLabel(_while.label);
 
-            self.addInstr(.{ .label = continue_label });
+            self.addInstr(.{ .label = self.dupe(continue_label) });
             const cond = self.value(_while.cond);
-            self.addInstr(.{ .jump_if_zero = .{ .condition = cond, .target = break_label } });
+            self.addInstr(.{ .jump_if_zero = .{ .condition = cond, .target = self.dupe(break_label) } });
             self.stmtInstruction(_while.body.*);
             self.addInstrs(&.{
-                .{ .jump = continue_label },
-                .{ .label = break_label },
+                .{ .jump = self.dupe(continue_label) },
+                .{ .label = self.dupe(break_label) },
             });
         },
         .do_while => |do_while| {
@@ -121,11 +129,11 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
 
             self.addInstr(.{ .label = start_label });
             self.stmtInstruction(do_while.body.*);
-            self.addInstr(.{ .label = continue_label });
+            self.addInstr(.{ .label = self.dupe(continue_label) });
             const cond = self.value(do_while.cond);
             self.addInstrs(&.{
-                .{ .jump_if_not_zero = .{ .condition = cond, .target = start_label } },
-                .{ .label = break_label },
+                .{ .jump_if_not_zero = .{ .condition = cond, .target = self.dupe(start_label) } },
+                .{ .label = self.dupe(break_label) },
             });
         },
         .@"for" => |_for| {
@@ -139,18 +147,18 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
                     _ = self.value(exp);
                 },
             }
-            self.addInstr(.{ .label = start_label });
+            self.addInstr(.{ .label = self.dupe(start_label) });
             const cond = if (_for.cond) |cond| self.value(cond) else null;
             if (cond) |c| {
-                self.addInstr(.{ .jump_if_zero = .{ .condition = c, .target = break_label } });
+                self.addInstr(.{ .jump_if_zero = .{ .condition = c, .target = self.dupe(break_label) } });
             }
             self.stmtInstruction(_for.body.*);
-            self.addInstr(.{ .label = continue_label });
+            self.addInstr(.{ .label = self.dupe(continue_label) });
             if (_for.post) |post|
                 _ = self.value(post);
             self.addInstrs(&.{
-                .{ .jump = start_label },
-                .{ .label = break_label },
+                .{ .jump = self.dupe(start_label) },
+                .{ .label = self.dupe(break_label) },
             });
         },
         .@"switch" => |_switch| {
@@ -175,7 +183,7 @@ fn stmtInstruction(self: *TackyIRGenerator, stmt: PIR.Statement) void {
             }
 
             if (_switch.default) |default| {
-                self.addInstr(.{ .jump = default.label });
+                self.addInstr(.{ .jump = default });
             } else {
                 self.addInstr(.{ .jump = break_label });
             }
@@ -205,30 +213,30 @@ fn value(self: *TackyIRGenerator, expr: PIR.Expression) Value {
                 const end_label = self.makeLabel("end");
 
                 const src1 = self.value(binary.lhs.*);
-                self.addInstr(.{ .jump_if_zero = .{ .condition = src1, .target = false_label } });
+                self.addInstr(.{ .jump_if_zero = .{ .condition = src1, .target = self.dupe(false_label) } });
                 const src2 = self.value(binary.rhs.*);
                 self.addInstrs(&.{
-                    .{ .jump_if_zero = .{ .condition = src2, .target = false_label } },
+                    .{ .jump_if_zero = .{ .condition = src2, .target = self.dupe(false_label) } },
                     .{ .copy = .{ .src = .{ .constant = 1 }, .dst = dst } },
-                    .{ .jump = end_label },
-                    .{ .label = false_label },
+                    .{ .jump = self.dupe(end_label) },
+                    .{ .label = self.dupe(false_label) },
                     .{ .copy = .{ .src = .{ .constant = 0 }, .dst = dst } },
-                    .{ .label = end_label },
+                    .{ .label = self.dupe(end_label) },
                 });
             } else if (binary.operator == .verbar_verbar) {
                 const true_label = self.makeLabel("true");
                 const end_label = self.makeLabel("end");
 
                 const src1 = self.value(binary.lhs.*);
-                self.addInstr(.{ .jump_if_not_zero = .{ .condition = src1, .target = true_label } });
+                self.addInstr(.{ .jump_if_not_zero = .{ .condition = src1, .target = self.dupe(true_label) } });
                 const src2 = self.value(binary.rhs.*);
                 self.addInstrs(&.{
-                    .{ .jump_if_not_zero = .{ .condition = src2, .target = true_label } },
+                    .{ .jump_if_not_zero = .{ .condition = src2, .target = self.dupe(true_label) } },
                     .{ .copy = .{ .src = .{ .constant = 0 }, .dst = dst } },
-                    .{ .jump = end_label },
-                    .{ .label = true_label },
+                    .{ .jump = self.dupe(end_label) },
+                    .{ .label = self.dupe(true_label) },
                     .{ .copy = .{ .src = .{ .constant = 1 }, .dst = dst } },
-                    .{ .label = end_label },
+                    .{ .label = self.dupe(end_label) },
                 });
             } else {
                 const src1 = self.value(binary.lhs.*);
@@ -330,7 +338,7 @@ fn value(self: *TackyIRGenerator, expr: PIR.Expression) Value {
 
             break :result dst;
         },
-        .variable => |name| .{ .variable = name },
+        .variable => |name| .{ .variable = self.dupe(name) },
         .assignment => |assignment| result: {
             const rhs = self.value(assignment.rhs.*);
             const dst = self.value(assignment.lhs.*);
@@ -369,20 +377,20 @@ fn value(self: *TackyIRGenerator, expr: PIR.Expression) Value {
 
             const cond = self.value(conditionl.cond.*);
             self.addInstr(
-                .{ .jump_if_zero = .{ .condition = cond, .target = else_label } },
+                .{ .jump_if_zero = .{ .condition = cond, .target = self.dupe(else_label) } },
             );
 
             const true_value = self.value(conditionl.if_true.*);
             self.addInstrs(&.{
                 .{ .copy = .{ .src = true_value, .dst = dst } },
-                .{ .jump = end_label },
-                .{ .label = else_label },
+                .{ .jump = self.dupe(end_label) },
+                .{ .label = self.dupe(else_label) },
             });
 
             const false_value = self.value(conditionl.if_false.*);
             self.addInstrs(&.{
                 .{ .copy = .{ .src = false_value, .dst = dst } },
-                .{ .label = end_label },
+                .{ .label = self.dupe(end_label) },
             });
 
             break :result dst;
@@ -419,4 +427,9 @@ fn addInstr(self: *TackyIRGenerator, instr: Instruction) void {
 
 fn addInstrs(self: *TackyIRGenerator, instrs: []const Instruction) void {
     for (instrs) |instr| self.addInstr(instr);
+}
+
+fn dupe(self: *TackyIRGenerator, str: []const u8) []u8 {
+    std.log.debug("duping: {s}", .{str});
+    return self.allocator.dupe(u8, str) catch @panic("OOM");
 }

@@ -1,70 +1,60 @@
 const std = @import("std");
 const Writer = std.Io.Writer;
-const token = @import("token.zig");
-const TokenKind = token.TokenKind;
-const Token = token.Token;
+const Token = @import("Token.zig");
+const TokenVariant = Token.TokenVariant;
+const TokenKind = Token.TokenKind;
 const Location = @import("Location.zig");
-
-const Result = @import("result.zig").Result;
 
 const oneOf = @import("utils.zig").oneOf;
 
 src: []const u8,
-position: usize = 0,
-location: Location = .start,
+start_position: usize = 0,
+current_position: usize = 0,
+start_location: Location = .start,
+current_location: Location = .start,
 ch: ?u8 = null,
-allocator: std.mem.Allocator,
+allocator: ?std.mem.Allocator = null,
 
 const Lexer = @This();
 
-pub const Error = union(enum) {
-    unrecognized_character: UnrecognizedCharacterError,
-    invalid_number: []const u8,
-
-    pub const UnrecognizedCharacterError = struct {
-        char: u8,
-        location: Location,
-    };
-
-    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
-        switch (self) {
-            .unrecognized_character => |err| try writer.print("unrecognized character: '{c}' at {f}", .{
-                err.char,
-                err.location,
-            }),
-            .invalid_number => |lexeme| try writer.print("invalid number: '{s}'", .{lexeme}),
-        }
-    }
-};
-
-pub fn LexerResult(OkType: type) type {
-    return Result(OkType, Error);
-}
-
-pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Lexer {
+pub fn new(filepath: []const u8, allocator: std.mem.Allocator) !Lexer {
     const file = try std.fs.cwd().openFile(filepath, .{});
     defer file.close();
 
     const source_code = try file.readToEndAlloc(allocator, 65000);
 
-    var self = Lexer{ .src = source_code, .allocator = allocator };
+    var self = Lexer{
+        .src = source_code,
+        .allocator = allocator,
+    };
 
-    if (self.src.len > 0)
-        self.ch = self.src[self.position];
+    self.init();
 
     return self;
 }
 
-pub fn deinit(self: Lexer) void {
-    self.allocator.free(self.src);
+fn init(self: *Lexer) void {
+    if (self.src.len > 0)
+        self.ch = self.src[self.current_position];
 }
 
-pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {
-    const ch = self.ch orelse return .Ok(null);
+pub fn deinit(self: Lexer) void {
+    if (self.allocator) |alloc| {
+        alloc.free(self.src);
+    }
+}
 
-    const start_loc = self.location;
+pub fn next(self: *Lexer) ?Token {
+    self.start_position = self.current_position;
+    self.start_location = self.current_location;
+    defer {
+        self.start_position = self.current_position;
+        self.start_location = self.current_location;
+    }
 
-    const tok_result = switch (ch) {
+    const ch = self.ch orelse return null;
+
+    const variant = switch (ch) {
         '(' => self.advanceWith(.lparen),
         ')' => self.advanceWith(.rparen),
         '{' => self.advanceWith(.lcub),
@@ -85,110 +75,49 @@ pub fn next(self: *Lexer) LexerResult(?token.LocatedToken) {
         '=' => self.advanceWith(if (self.match('=')) .equals_equals else .equals),
         ':' => self.advanceWith(.colon),
         '?' => self.advanceWith(.quest),
-        else => token: {
+        else => variant: {
             if (std.ascii.isWhitespace(ch)) {
                 self.skipWhitespace();
                 return self.next();
             }
 
             if (isIdentifierStart(ch))
-                break :token self.lexIdentifier();
+                break :variant self.lexIdentifier();
 
             if (std.ascii.isDigit(ch))
-                break :token self.lexNumber();
+                break :variant self.lexNumber();
 
-            break :token LexerResult(Token).Err(.{
-                .unrecognized_character = .{
-                    .char = ch,
-                    .location = self.location,
-                },
-            });
+            break :variant self.advanceWith(.{ .err = .{ .unrecognized_char = ch } });
         },
     };
 
-    return switch (tok_result) {
-        .ok => |tok| .Ok(.{ tok, start_loc }),
-        .err => |err| .Err(err),
+    return .{
+        .variant = variant,
+        .lexeme = self.currentLexeme(),
+        .span = .{
+            self.start_location,
+            self.current_location,
+        },
     };
 }
 
-pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
-    try writer.print("Lexer{{ src: \"{s}\", position: {}, location: {f}, ch: '{c}' }}", .{
-        self.src,
-        self.position,
-        self.location,
-        self.ch orelse 0,
-    });
+fn currentLexeme(self: *Lexer) []const u8 {
+    return self.src[self.start_position..self.current_position];
 }
 
-fn lexNumber(self: *Lexer) LexerResult(Token) {
-    const result = if (self.ch == '0' and self.peekChar() != null)
-        switch (self.peekChar().?) {
-            'x', 'X' => self.lexHexadecimalNumber(),
-            'b', 'B' => self.lexBinaryNumber(),
-            else => if (std.ascii.isDigit(self.peekChar().?)) self.lexOctalNumber() else self.lexDecimalNumber(),
-        }
-    else
-        self.lexDecimalNumber();
-
-    const tok = switch (result) {
-        .ok => |val| val,
-        .err => |err| return .Err(err),
-    };
-
-    if (oneOf(self.ch.?, "%^&*()-+=<>{}[];:,") or std.ascii.isWhitespace(self.ch.?)) {
-        return .Ok(tok);
-    } else {
-        return .Err(.{ .invalid_number = "<invalid suffix>" });
-    }
-}
-
-fn lexRadixNumber(self: *Lexer, radix: u8, predicate: fn (u8) bool) LexerResult(Token) {
-    const lexeme = self.readWhile(predicate);
-
-    if (lexeme.len == 0)
-        return .Err(.{ .invalid_number = "<missing digits>" });
-
-    const number = std.fmt.parseUnsigned(u128, lexeme, radix) catch {
-        return .Err(.{ .invalid_number = lexeme });
-    };
-    return .Ok(.{ .int_lit = number });
-}
-
-fn lexHexadecimalNumber(self: *Lexer) LexerResult(Token) {
-    self.advance(); // skip '0'
-    self.advance(); // skip 'x'|'X'
-    return self.lexRadixNumber(16, std.ascii.isHex);
-}
-
-fn lexOctalNumber(self: *Lexer) LexerResult(Token) {
-    self.advance(); // skip '0'
-    return self.lexRadixNumber(8, struct {
-        pub fn cb(c: u8) bool {
-            return c >= '0' and c <= '7';
-        }
-    }.cb);
-}
-
-fn lexBinaryNumber(self: *Lexer) LexerResult(Token) {
-    self.advance(); // skip '0'
-    self.advance(); // skip 'b'|'B'
-    return self.lexRadixNumber(2, struct {
-        pub fn cb(c: u8) bool {
-            return c == '0' or c == '1';
-        }
-    }.cb);
-}
-
-fn lexDecimalNumber(self: *Lexer) LexerResult(Token) {
+fn lexNumber(self: *Lexer) TokenVariant {
     const lexeme = self.readWhile(std.ascii.isDigit);
-    const number = std.fmt.parseUnsigned(u128, lexeme, 10) catch {
-        return .Err(.{ .invalid_number = lexeme });
-    };
-    return .Ok(.{ .int_lit = number });
+    const number = std.fmt.parseUnsigned(u128, lexeme, 10) catch
+        return .{ .err = .{ .large_number = lexeme } };
+
+    const suffix = self.readWhile(std.ascii.isAlphanumeric);
+    if (suffix.len > 0)
+        return .{ .err = .{ .invalid_suffix = suffix } };
+
+    return .{ .int_lit = number };
 }
 
-const keywordsMap = std.StaticStringMap(Token).initComptime(.{
+const keywordsMap = std.StaticStringMap(TokenVariant).initComptime(.{
     .{ "int", .int },
     .{ "void", .void },
     .{ "return", .@"return" },
@@ -205,10 +134,9 @@ const keywordsMap = std.StaticStringMap(Token).initComptime(.{
     .{ "default", .default },
 });
 
-fn lexIdentifier(self: *Lexer) LexerResult(Token) {
+fn lexIdentifier(self: *Lexer) TokenVariant {
     const lexeme = self.readWhile(isIdentifier);
-    const tok = keywordsMap.get(lexeme) orelse Token{ .identifier = lexeme };
-    return .Ok(tok);
+    return keywordsMap.get(lexeme) orelse .{ .identifier = lexeme };
 }
 
 fn isIdentifierStart(ch: u8) bool {
@@ -220,18 +148,18 @@ fn isIdentifier(ch: u8) bool {
 }
 
 fn readWhile(self: *Lexer, pred: fn (u8) bool) []const u8 {
-    const start_pos = self.position;
+    const start_pos = self.current_position;
     self.seek(pred);
-    return self.src[start_pos..self.position];
+    return self.src[start_pos..self.current_position];
 }
 
 fn skipWhitespace(self: *Lexer) void {
     self.seek(std.ascii.isWhitespace);
 }
 
-fn advanceWith(self: *Lexer, tok: Token) LexerResult(Token) {
+fn advanceWith(self: *Lexer, tok: TokenVariant) TokenVariant {
     self.advance();
-    return .Ok(tok);
+    return tok;
 }
 
 fn seek(self: *Lexer, pred: fn (u8) bool) void {
@@ -248,21 +176,21 @@ fn advance(self: *Lexer) void {
         return;
 
     if (self.ch.? == '\n') {
-        self.location.line += 1;
-        self.location.column = 1;
+        self.current_location.line += 1;
+        self.current_location.column = 1;
     } else {
-        self.location.column += 1;
+        self.current_location.column += 1;
     }
 
     self.ch = self.peekChar();
-    self.position += 1;
+    self.current_position += 1;
 }
 
 fn peekChar(self: Lexer) ?u8 {
-    if (self.position + 1 >= self.src.len)
+    if (self.current_position + 1 >= self.src.len)
         return null;
 
-    return self.src[self.position + 1];
+    return self.src[self.current_position + 1];
 }
 
 fn match(self: *Lexer, ch: u8) bool {
@@ -274,8 +202,13 @@ fn match(self: *Lexer, ch: u8) bool {
 }
 
 test Lexer {
-    const expected_toks = [_]Token{
-        .{ .identifier = "main" }, .{ .int_lit = 43 },
+    const expected_toks = [_]TokenVariant{
+        .{ .err = .{ .large_number = "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" } },
+        .{ .int_lit = 0 },
+        .{ .err = .{ .unrecognized_char = '`' } },
+        .{ .int_lit = 0 },
+        .{ .err = .{ .invalid_suffix = "x1010" } },
+        .{ .identifier = "main" }, .{ .identifier = "__name__" }, .{ .int_lit = 43 }, //
         .lparen,        .rparen,     .lcub,          .rcub,          .semicolon,       .tilde,        .minus,          .plus, //
         .asterisk,      .slash,      .percent,       .amp,           .verbar,          .hat,          .lt_lt,          .gt_gt,
         .excl,          .amp_amp,    .verbar_verbar, .equals_equals, .excl_equals,     .lt,           .gt,             .lt_equals,
@@ -286,16 +219,20 @@ test Lexer {
     };
 
     const code =
-        \\main 43
+        \\ 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+        \\ 000000000000000000000000000000000000000000
+        \\ ` 00 00x1010
+        \\main __name__ 43
         \\(){};~-+*/%&|^<<>>!&&||==!=<><=>==+=-=*=/=%=&=|=^=<<=>>=++--:? 
         \\int void return if else goto do while for break continue switch case default
     ;
 
-    var lexer = init(code);
+    var lexer = Lexer{ .src = code };
+    lexer.init();
 
     var i: usize = 0;
-    while (try lexer.next().toErrorUnion(error.lexer_error)) |ltoken| : (i += 1) {
-        const this_tok, _ = ltoken;
+    while (lexer.next()) |ltoken| : (i += 1) {
+        const this_tok = ltoken.variant;
         try std.testing.expect(i < expected_toks.len);
 
         const expected_tok = expected_toks[i];
@@ -303,6 +240,15 @@ test Lexer {
         switch (this_tok) {
             .identifier => |iden| try std.testing.expectEqualStrings(expected_tok.identifier, iden),
             .int_lit => |val| try std.testing.expectEqual(expected_tok.int_lit, val),
+            .err => |err| {
+                const expected_err = expected_tok.err;
+                try std.testing.expectEqual(std.meta.activeTag(err), std.meta.activeTag(expected_err));
+                switch (err) {
+                    .invalid_suffix => |suffix| try std.testing.expectEqualStrings(expected_err.invalid_suffix, suffix),
+                    .large_number => |number| try std.testing.expectEqualStrings(expected_err.large_number, number),
+                    .unrecognized_char => |char| try std.testing.expectEqual(expected_err.unrecognized_char, char),
+                }
+            },
             else => try std.testing.expectEqual(expected_toks[i], this_tok),
         }
     }

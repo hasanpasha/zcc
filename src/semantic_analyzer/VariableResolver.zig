@@ -1,18 +1,18 @@
 const std = @import("std");
+const AllocErr = std.mem.Allocator.Error;
 const Writer = std.Io.Writer;
 const AST = @import("../AST.zig");
-const VIR = @import("VIR.zig");
 const Result = @import("../result.zig").Result;
 const Location = @import("../Location.zig");
 const oneOf = @import("../utils.zig").oneOf;
 
 pub const Environment = struct {
-    parent: ?*Environment = null,
+    parent: ?*Environment,
     variables: std.StringHashMap([]const u8),
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, parent: ?*Environment) *Environment {
-        const self = allocator.create(Environment) catch @panic("OOM");
+    pub fn init(allocator: std.mem.Allocator, parent: ?*Environment) AllocErr!*Environment {
+        const self = try allocator.create(Environment);
         self.* = .{
             .parent = parent,
             .variables = .init(allocator),
@@ -21,9 +21,12 @@ pub const Environment = struct {
         return self;
     }
 
-    pub fn deinit(self: *Environment) void {
-        self.variables.deinit();
-        self.allocator.destroy(self);
+    pub fn count(self: *Environment) u32 {
+        return self.variables.count();
+    }
+
+    pub fn isGLobal(self: *Environment) bool {
+        return self.parent == null;
     }
 
     pub fn getCur(self: *Environment, name: []const u8) ?[]const u8 {
@@ -32,281 +35,225 @@ pub const Environment = struct {
 
     pub fn getRec(self: *Environment, name: []const u8) ?[]const u8 {
         return self.getCur(name) orelse
-            return if (self.parent) |parent| parent.getRec(name) else null;
+            if (self.parent) |parent| parent.getRec(name) else null;
     }
 
-    pub fn put(self: *Environment, name: []const u8, unique: []const u8) void {
-        self.variables.put(name, unique) catch @panic("OOM");
+    pub fn put(self: *Environment, name: []const u8, unique: []const u8) AllocErr!void {
+        try self.variables.put(name, unique);
     }
 };
 
 allocator: std.mem.Allocator,
-temp_alloc: std.mem.Allocator,
 variables: *Environment,
-errs: std.array_list.Managed(ErrorItem),
-counter: usize = 0,
+counter: *usize,
 
 const VariableResolver = @This();
 
-const ErrorVariant = union(enum) {
-    duplicate: []const u8,
-    invalid_lvalue,
-    undeclared: []const u8,
-
-    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
-        switch (self) {
-            .duplicate => |name| try writer.print("duplicate variable '{s}'", .{name}),
-            .invalid_lvalue => try writer.writeAll("invalid lvalue"),
-            .undeclared => |name| try writer.print("undeclared variable '{s}'", .{name}),
-        }
-    }
-};
-
-const ErrorItem = struct {
-    err: ErrorVariant,
-    loc: Location,
-
-    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
-        try writer.print("{f} at {f}", .{
-            self.err,
-            std.fmt.alt(self.loc, .readableFmt),
-        });
-    }
-};
-
-pub const Error = struct {
-    errs: std.array_list.Managed(ErrorItem),
-
-    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
-        for (self.errs.items, 1..) |err, i| {
-            try writer.print("{}: {f}\n", .{ i, err });
-        }
-    }
-};
-
-pub fn resolve(in: AST, allocator: std.mem.Allocator) Result(VIR, Error) {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    var temp_arena = std.heap.ArenaAllocator.init(allocator);
+pub fn resolve(in: *AST, glob_counter: *usize) AllocErr!void {
+    var arena = in.arena;
 
     var self: VariableResolver = .{
         .allocator = arena.allocator(),
-        .temp_alloc = temp_arena.allocator(),
-        .variables = .init(temp_arena.allocator(), null),
-        .errs = .init(allocator),
+        .variables = try .init(arena.allocator(), null),
+        .counter = glob_counter,
     };
-    defer temp_arena.deinit();
 
-    const main_func = self.function(in.main_function);
-
-    if (self.errs.items.len > 0) {
-        return .Err(.{ .errs = self.errs });
-    }
-
-    return .Ok(.{ .main_function = main_func, .arena = arena });
+    for (in.declarations) |*ldecl|
+        _ = try self.declaration(&ldecl.@"0");
 }
 
-fn function(self: *VariableResolver, func: AST.Function) VIR.Function {
-    return .{
-        .name = func.name.name,
-        .body = self.block(func.body),
-    };
-}
-
-fn block(self: *VariableResolver, blk: AST.Block) VIR.Block {
-    self.pushEnv(null);
+fn block(self: *VariableResolver, blk: *AST.Block) AllocErr!*AST.Block {
+    try self.pushEnv(null);
     defer self.popEnv();
 
-    var items = self.allocator.alloc(VIR.BlockItem, blk.items.len) catch @panic("OOM");
-    for (blk.items, 0..) |item, i|
-        items[i] = self.blockItem(item);
-    return .{ .items = items };
+    for (blk.items) |*item|
+        _ = try self.blockItem(item);
+
+    return blk;
 }
 
-fn blockItem(self: *VariableResolver, item: AST.BlockItem) VIR.BlockItem {
-    return switch (item) {
-        .declaration => |decl| .{ .declaration = self.declaration(decl) },
-        .statement => |stmt| .{ .statement = self.statement(stmt) },
+fn blockItem(self: *VariableResolver, item: *AST.BlockItem) AllocErr!*AST.BlockItem {
+    item.* = switch (item.*) {
+        .err => item.*,
+        .declaration => |decl| .{ .declaration = try self.declaration(decl) },
+        .statement => |*stmt| .{ .statement = (try self.statement(stmt)).* },
     };
+    return item;
 }
 
-fn declaration(self: *VariableResolver, decl: AST.Declaration) VIR.Declaration {
-    return switch (decl) {
-        .variable => |variable| _var: {
+fn declaration(self: *VariableResolver, decl: *AST.Declaration) AllocErr!*AST.Declaration {
+    decl.* = switch (decl.*) {
+        .err => decl.*,
+        .variable => |*variable| _var: {
             const name = variable.name.name;
-            const loc = variable.name.location;
 
             if (self.variables.getCur(name) != null)
-                self.fail(.{
-                    .err = .{ .duplicate = name },
-                    .loc = loc,
-                });
+                break :_var .{ .err = .{ .duplicate = name } };
 
-            const unique_name = self.makeUniqueName(name);
-            self.variables.put(name, unique_name);
+            const unique_name = try self.makeUniqueName(name);
+            std.log.debug("putting: {s} as {s}", .{ name, unique_name });
+            try self.variables.put(name, unique_name);
 
-            var init: ?VIR.Expression = null;
-            if (variable.init) |_init|
-                init = self.expression(_init);
+            var init: ?AST.Expression = null;
+            if (variable.init) |*_init|
+                init = (try self.expression(_init)).*;
 
             break :_var .{ .variable = .{
-                .name = unique_name,
+                .name = variable.name.applyUniqueName(try self.allocator.dupe(u8, unique_name)),
                 .init = init,
             } };
         },
-    };
-}
-
-fn statement(self: *VariableResolver, stmt: AST.Statement) VIR.Statement {
-    return switch (stmt) {
-        .null => .null,
-        .@"return" => |expr| .{ .@"return" = self.expression(expr) },
-        .expr => |expr| .{ .expr = self.expression(expr) },
-        .@"if" => |_if| .{
-            .@"if" = .{
-                .cond = self.expression(_if.cond),
-                .then = self.onHeap(self.statement(_if.then.*)),
-                .or_else = if (_if.or_else) |s| self.onHeap(self.statement(s.*)) else null,
-            },
-        },
-        .goto => |target| .{ .goto = target },
-        .labeled_stmt => |ls| .{ .labeled_stmt = .{
-            .label = ls.label,
-            .stmt = self.onHeap(self.statement(ls.stmt.*)),
-        } },
-        .compound => |blk| .{ .compound = self.block(blk) },
-        .@"break" => .@"break",
-        .@"continue" => .@"continue",
-        .@"while" => |_while| .{ .@"while" = .{
-            .cond = self.expression(_while.cond),
-            .body = self.onHeap(self.statement(_while.body.*)),
-        } },
-        .do_while => |do_while| .{ .do_while = .{
-            .body = self.onHeap(self.statement(do_while.body.*)),
-            .cond = self.expression(do_while.cond),
-        } },
-        .@"for" => |_for| stmt: {
-            self.pushEnv(null);
+        .function => |*func| _func: {
+            try self.pushEnv(null);
             defer self.popEnv();
-            break :stmt .{ .@"for" = .{
-                .init = switch (_for.init) {
-                    .decl => |decl| .{ .decl = self.onHeap(self.declaration(decl.*)) },
-                    .expr => |expr| .{ .expr = if (expr) |exp| self.expression(exp) else null },
-                },
-                .cond = if (_for.cond) |cond| self.expression(cond) else null,
-                .post = if (_for.post) |post| self.expression(post) else null,
-                .body = self.onHeap(self.statement(_for.body.*)),
+
+            break :_func .{ .function = .{
+                .name = func.name,
+                .body = (try self.block(&func.body)).*,
             } };
         },
-        .@"switch" => |_switch| .{ .@"switch" = .{
-            .cond = self.expression(_switch.cond),
-            .body = self.onHeap(self.statement(_switch.body.*)),
-        } },
-        .case => |case| .{ .case = .{
-            .expr = self.expression(case.expr),
-            .stmt = if (case.stmt) |_stmt| self.onHeap(self.statement(_stmt.*)) else null,
-        } },
-        .default => |default| .{ .default = .{
-            .stmt = if (default.stmt) |_stmt| self.onHeap(self.statement(_stmt.*)) else null,
-        } },
     };
+    return decl;
 }
 
-fn expression(self: *VariableResolver, expr: AST.Expression) VIR.Expression {
-    return switch (expr) {
-        .int_lit => |lit| .{ .int_lit = lit.value },
+fn statement(self: *VariableResolver, stmt: *AST.Statement) AllocErr!*AST.Statement {
+    stmt.* = switch (stmt.*) {
+        .err, .null, .@"break", .@"continue" => stmt.*,
+        .@"return" => |*expr| .{ .@"return" = (try self.expression(expr)).* },
+        .expr => |*expr| .{ .expr = (try self.expression(expr)).* },
+        .@"if" => |*_if| .{ .@"if" = .{
+            .cond = (try self.expression(&_if.cond)).*,
+            .then = try self.statement(_if.then),
+            .or_else = if (_if.or_else) |s| try self.statement(s) else null,
+        } },
+        .goto => |target| .{ .goto = target },
+        .labeled_stmt => |*ls| .{ .labeled_stmt = .{
+            .label = ls.label,
+            .stmt = try self.statement(ls.stmt),
+        } },
+        .compound => |*blk| .{ .compound = (try self.block(blk)).* },
+        .@"while" => |*_while| .{ .@"while" = .{
+            .cond = (try self.expression(&_while.cond)).*,
+            .body = try self.statement(_while.body),
+        } },
+        .do_while => |*do_while| .{ .do_while = .{
+            .body = try self.statement(do_while.body),
+            .cond = (try self.expression(&do_while.cond)).*,
+        } },
+        .@"for" => |*_for| stmt: {
+            try self.pushEnv(null);
+            defer self.popEnv();
+
+            break :stmt .{ .@"for" = .{
+                .init = switch (_for.init) {
+                    .decl => |decl| .{ .decl = try self.declaration(decl) },
+                    .expr => |*expr| .{ .expr = if (expr.*) |*exp| (try self.expression(exp)).* else null },
+                },
+                .cond = if (_for.cond) |*cond| (try self.expression(cond)).* else null,
+                .post = if (_for.post) |*post| (try self.expression(post)).* else null,
+                .body = try self.statement(_for.body),
+            } };
+        },
+        .@"switch" => |*_switch| .{ .@"switch" = .{
+            .cond = (try self.expression(&_switch.cond)).*,
+            .body = try self.statement(_switch.body),
+        } },
+        .case => |*case| .{ .case = .{
+            .expr = (try self.expression(&case.expr)).*,
+            .stmt = if (case.stmt) |_stmt| try self.statement(_stmt) else null,
+        } },
+        .default => |*default| .{ .default = .{
+            .stmt = if (default.stmt) |_stmt| try self.statement(_stmt) else null,
+        } },
+    };
+    return stmt;
+}
+
+fn expression(self: *VariableResolver, expr: *AST.Expression) AllocErr!*AST.Expression {
+    expr.* = switch (expr.*) {
+        .err => expr.*,
+        .int_lit => |lit| .{ .int_lit = lit },
         .binary => |binary| .{ .binary = .{
-            .operator = binary.operator.@"0",
-            .lhs = self.onHeap(self.expression(binary.lhs.*)),
-            .rhs = self.onHeap(self.expression(binary.rhs.*)),
+            .operator = binary.operator,
+            .lhs = try self.expression(binary.lhs),
+            .rhs = try self.expression(binary.rhs),
         } },
         .lhs_unary => |unary| u: {
             if (oneOf(unary.operator.@"0", &.{ .plus_plus, .minus_minus }) and unary.rhs.* != .variable)
-                self.fail(.{
-                    .err = .invalid_lvalue,
-                    .loc = locateExpr(unary.rhs.*),
-                });
+                break :u .{ .err = .invalid_lvalue };
 
             break :u .{ .lhs_unary = .{
-                .operator = unary.operator.@"0",
-                .rhs = self.onHeap(self.expression(unary.rhs.*)),
+                .operator = unary.operator,
+                .rhs = try self.expression(unary.rhs),
             } };
         },
         .rhs_unary => |unary| u: {
             if (unary.lhs.* != .variable)
-                self.fail(.{
-                    .err = .invalid_lvalue,
-                    .loc = locateExpr(unary.lhs.*),
-                });
+                break :u .{ .err = .invalid_lvalue };
 
             break :u .{ .rhs_unary = .{
-                .operator = unary.operator.@"0",
-                .lhs = self.onHeap(self.expression(unary.lhs.*)),
+                .operator = unary.operator,
+                .lhs = try self.expression(unary.lhs),
             } };
         },
         .assignment => |assignment| ass: {
             if (assignment.lhs.* != .variable)
-                self.fail(.{
-                    .err = .invalid_lvalue,
-                    .loc = locateExpr(assignment.lhs.*),
-                });
+                break :ass .{ .err = .invalid_lvalue };
 
             break :ass .{ .assignment = .{
-                .operator = assignment.operator.@"0",
-                .lhs = self.onHeap(self.expression(assignment.lhs.*)),
-                .rhs = self.onHeap(self.expression(assignment.rhs.*)),
+                .operator = assignment.operator,
+                .lhs = try self.expression(assignment.lhs),
+                .rhs = try self.expression(assignment.rhs),
             } };
         },
-        .variable => |_var| _v: {
-            var unique_name: []const u8 = undefined;
-            if (self.variables.getRec(_var.name) == null) {
-                self.fail(.{
-                    .err = .{ .undeclared = _var.name },
-                    .loc = _var.location,
-                });
-            } else {
-                unique_name = self.variables.getRec(_var.name).?;
+        .variable => |*_var| _v: {
+            if (self.variables.getRec(_var.name)) |unique| {
+                break :_v .{ .variable = _var.applyUniqueName(try self.dupe(unique)) };
             }
-            break :_v .{ .variable = unique_name };
+
+            break :_v .{ .err = .{ .undeclared = _var.name } };
         },
         .conditional => |conditional| .{ .conditional = .{
-            .cond = self.onHeap(self.expression(conditional.cond.*)),
-            .if_true = self.onHeap(self.expression(conditional.if_true.*)),
-            .if_false = self.onHeap(self.expression(conditional.if_false.*)),
+            .cond = try self.expression(conditional.cond),
+            .if_true = try self.expression(conditional.if_true),
+            .if_false = try self.expression(conditional.if_false),
         } },
     };
+    return expr;
 }
 
 const onHeap = @import("../utils.zig").onHeap;
 
-fn fail(self: *VariableResolver, err: ErrorItem) void {
-    self.errs.append(err) catch @panic("OOM");
-}
-
-fn makeUniqueName(self: *VariableResolver, suffix: []const u8) []u8 {
-    defer self.counter += 1;
+fn makeUniqueName(self: *VariableResolver, suffix: []const u8) AllocErr![]u8 {
+    std.log.debug("new counter: {}", .{self.counter.*});
+    defer self.counter.* += 1;
     return std.fmt.allocPrint(self.allocator, "var.{s}.{}", .{
         suffix,
-        self.counter,
-    }) catch @panic("OOM");
+        self.counter.*,
+    });
 }
 
-fn locateExpr(expr: AST.Expression) Location {
-    return switch (expr) {
-        .int_lit => |lit| lit.location,
-        .binary => |b| locateExpr(b.lhs.*),
-        .lhs_unary => |u| u.operator.@"1",
-        .rhs_unary => |u| u.operator.@"1",
-        .assignment => |ass| locateExpr(ass.lhs.*),
-        .variable => |va| va.location,
-        .conditional => |cond| locateExpr(cond.cond.*),
-    };
-}
+// fn locateExpr(expr: AST.Expression) Location {
+//     return switch (expr) {
+//         .int_lit => |lit| lit.location,
+//         .binary => |b| locateExpr(b.lhs.*),
+//         .lhs_unary => |u| u.operator.@"1",
+//         .rhs_unary => |u| u.operator.@"1",
+//         .assignment => |ass| locateExpr(ass.lhs.*),
+//         .variable => |va| va.location,
+//         .conditional => |cond| locateExpr(cond.cond.*),
+//     };
+// }
 
-pub fn pushEnv(self: *VariableResolver, env: ?*Environment) void {
-    self.variables = if (env) |e| e else .init(self.allocator, self.variables);
+pub fn pushEnv(self: *VariableResolver, env: ?*Environment) AllocErr!void {
+    self.variables = if (env) |e| e else try .init(self.allocator, self.variables);
 }
 
 pub fn popEnv(self: *VariableResolver) void {
     if (self.variables.parent) |parent|
         self.variables = parent;
+}
+
+pub fn dupe(self: *VariableResolver, str: []const u8) AllocErr![]const u8 {
+    return try self.allocator.dupe(u8, str);
 }

@@ -5,8 +5,8 @@ pub fn oneOf(e: anytype, es: []const @TypeOf(e)) bool {
     return false;
 }
 
-pub fn onHeap(self: anytype, x: anytype) *@TypeOf(x) {
-    const ptr = self.allocator.create(@TypeOf(x)) catch @panic("OOM");
+pub fn onHeap(self: anytype, x: anytype) std.mem.Allocator.Error!*@TypeOf(x) {
+    const ptr = try self.allocator.create(@TypeOf(x));
     ptr.* = x;
     return ptr;
 }

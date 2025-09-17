@@ -2,41 +2,19 @@ const std = @import("std");
 const Writer = std.Io.Writer;
 
 const AST = @import("../AST.zig");
-pub const PIR = @import("PIR.zig");
 
-const Result = @import("../result.zig").Result;
-
-const VariableResolution = @import("VariableResolver.zig");
-const LabelResolution = @import("LabelResolver.zig");
+const VariableResolver = @import("VariableResolver.zig");
+const LabelResolver = @import("LabelResolver.zig");
 const StmtLabel = @import("StmtLabel.zig");
 
-pub const Error = union(enum) {
-    variable_resolution: VariableResolution.Error,
-    label_resoluion: LabelResolution.Error,
-    loop_label: StmtLabel.Error,
-
-    pub fn format(self: @This(), writer: *Writer) Writer.Error!void {
-        switch (self) {
-            inline else => |err| try writer.print("{f}", .{err}),
-        }
-    }
-};
-
-pub fn analyze(in: AST, allocator: std.mem.Allocator) Result(PIR, Error) {
-    const vars_reolved = switch (VariableResolution.resolve(in, allocator)) {
-        .ok => |val| val,
-        .err => |err| return .Err(.{ .variable_resolution = err }),
-    };
-
-    const labels_resolved = switch (LabelResolution.resolve(vars_reolved, allocator)) {
-        .ok => |val| val,
-        .err => |err| return .Err(.{ .label_resoluion = err }),
-    };
-
-    const loops_labeled = switch (StmtLabel.label(labels_resolved, allocator)) {
-        .ok => |val| val,
-        .err => |err| return .Err(.{ .loop_label = err }),
-    };
-
-    return .Ok(loops_labeled);
+pub fn analyze(in: *AST) !struct { usize, usize } {
+    var var_counter: usize = 0;
+    var label_counter: usize = 0;
+    try VariableResolver.resolve(in, &var_counter);
+    std.log.debug("after VariableResolution {f}", .{in.*});
+    try LabelResolver.resolve(in, &label_counter);
+    std.log.debug("after LabelResolution {f}", .{in.*});
+    try StmtLabel.label(in, &label_counter);
+    std.log.debug("after StmtLabel {f}", .{in.*});
+    return .{ var_counter, label_counter };
 }
